@@ -1,0 +1,8 @@
+name: rank-v2
+description: Test reciprocal rank fusion.
+assignment_unit: subject_id
+groups:
+  - name: treatment
+    weight: 0.2
+    config:
+      reranker: rrf

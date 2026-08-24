@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/statespace-tech/cli/security/advisories/new
+    about: Report a vulnerability privately.
+  - name: Questions
+    url: https://github.com/statespace-tech/cli/discussions
+    about: Ask a usage or design question.

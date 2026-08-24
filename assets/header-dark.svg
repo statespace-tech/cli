@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="180" viewBox="0 0 760 180" role="img" aria-labelledby="title">
+  <title id="title">Statespace</title>
+  <g transform="translate(18 16) scale(.376)">
+    <g fill="none" stroke="#131411" stroke-width="5" stroke-miterlimit="10">
+      <rect x="47.21" y="271.57" width="113.33" height="113.33" rx="15.74" transform="translate(263.17 633.45) rotate(170)" fill="#8cae24" />
+      <rect x="27.53" y="159.96" width="113.33" height="113.33" rx="15.74" transform="translate(204.73 415.34) rotate(170)" fill="#6f881f" />
+      <rect x="158.82" y="251.89" width="113.33" height="113.33" rx="15.74" transform="translate(481.28 575.01) rotate(170)" fill="#4d5f18" />
+      <rect x="270.43" y="232.21" width="113.33" height="113.33" rx="15.74" transform="translate(699.39 516.57) rotate(170)" fill="#6f881f" />
+      <rect x="250.75" y="120.6" width="113.33" height="113.33" rx="15.74" transform="translate(640.95 298.46) rotate(170)" fill="#8cae24" />
+      <rect x="8.99" y="48.35" width="113.33" height="113.33" rx="15.74" transform="translate(148.55 197.03) rotate(170)" fill="#4d5f18" />
+      <rect x="119.46" y="28.67" width="113.33" height="113.33" rx="15.74" transform="translate(364.4 138.79) rotate(170)" fill="#efff91" />
+      <rect x="231.07" y="8.99" width="113.33" height="113.33" rx="15.74" transform="translate(582.51 80.35) rotate(170)" fill="#e3ff73" />
+      <rect x="139.14" y="140.28" width="113.33" height="113.33" rx="15.74" transform="translate(422.84 356.9) rotate(170)" fill="#d8ff3e" />
+    </g>
+  </g>
+  <text x="190" y="112" fill="#efeee8" font-family="Montserrat, Arial, sans-serif" font-size="64" font-weight="700" letter-spacing="10">STATESPACE</text>
+</svg>
