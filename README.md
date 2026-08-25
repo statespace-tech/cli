@@ -34,10 +34,21 @@ curl -fsSL https://statespace.com/install | bash
 
 ## Quickstart
 
-Sign in with GitHub or Google, then create a globally named project.
+Sign in with GitHub or Google. Statespace creates a free account on your first login.
 
 ```bash
 ssp login
+```
+
+Print the activation URL when the CLI cannot open a browser.
+
+```bash
+ssp login --no-open
+```
+
+Create a globally named project after authentication.
+
+```bash
 ssp project create --name atlas-search
 ssp project list
 ```

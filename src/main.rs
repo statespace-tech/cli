@@ -288,6 +288,9 @@ async fn run() -> anyhow::Result<()> {
             let printed_url = no_open || webbrowser::open(&login.verification_url).is_err();
             if printed_url {
                 print_yaml(&json!({ "login_url": login.verification_url }))?;
+                eprintln!("Open the login URL to sign in or create a free account.");
+            } else {
+                eprintln!("Complete sign-in in your browser.");
             }
             let complete = wait_for_login(&api, &login).await?;
             settings = Settings {
