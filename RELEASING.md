@@ -14,7 +14,7 @@
 4. Commit the release changes.
 5. Create and push a signed `vMAJOR.MINOR.PATCH` tag.
 
-The release workflow builds binary archives for macOS and Linux on x86_64 and arm64. It publishes a SHA-256 sidecar file with each archive.
+The release workflow builds binary archives for macOS and Linux on x86_64 and arm64. Linux archives use musl for portable static binaries. The workflow publishes a SHA-256 sidecar file with each archive.
 
 After publication, test a clean CLI installation:
 

@@ -8,7 +8,7 @@ install_dir=${STATESPACE_INSTALL_DIR:-"${HOME}/.local/bin"}
 
 case "$(uname -s)" in
   Darwin) os=apple-darwin ;;
-  Linux) os=unknown-linux-gnu ;;
+  Linux) os=unknown-linux-musl ;;
   *)
     echo "ssp: unsupported operating system: $(uname -s)" >&2
     exit 1
