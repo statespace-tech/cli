@@ -1,10 +1,11 @@
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, bail};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use reqwest::{Client, Method, Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -18,7 +19,12 @@ use serde_json::{Value, json};
 struct Cli {
     #[arg(long, env = "STATESPACE_URL", global = true)]
     endpoint: Option<String>,
-    #[arg(long, env = "STATESPACE_TOKEN", global = true, hide_env_values = true)]
+    #[arg(
+        long = "account-token",
+        env = "STATESPACE_ACCOUNT_TOKEN",
+        global = true,
+        hide_env_values = true
+    )]
     token: Option<String>,
     #[command(subcommand)]
     command: Command,
@@ -32,11 +38,14 @@ enum Command {
         #[arg(long)]
         no_open: bool,
     },
+    /// Remove the saved account session.
+    Logout,
     /// Manage projects.
     Project(ProjectCommand),
     /// Show the signed-in account and enforced plan limits.
     Account,
-    /// Run service administration commands.
+    #[command(hide = true)]
+    /// Run internal service administration commands.
     Admin(AdminCommand),
     /// Manage experiments in a project.
     Experiment(ExperimentCommand),
@@ -63,10 +72,43 @@ enum ProjectSubcommand {
     },
     /// List all projects.
     List,
-    /// Show one project and its experiments.
+    /// Show one project, its tokens, and its experiments.
     Show {
         #[arg(short = 'N', long)]
         name: String,
+    },
+    /// Manage project access tokens.
+    Token(ProjectTokenCommand),
+}
+
+#[derive(Args)]
+struct ProjectTokenCommand {
+    #[command(subcommand)]
+    command: ProjectTokenSubcommand,
+}
+
+#[derive(Subcommand)]
+enum ProjectTokenSubcommand {
+    /// Create a project token and print its secret once.
+    Create {
+        #[arg(short = 'P', long)]
+        project: String,
+        #[arg(short = 'N', long)]
+        name: String,
+        #[arg(long)]
+        access: TokenAccess,
+    },
+    /// List active project tokens without their secrets.
+    List {
+        #[arg(short = 'P', long)]
+        project: String,
+    },
+    /// Revoke a project token.
+    Revoke {
+        #[arg(short = 'P', long)]
+        project: String,
+        #[arg(long)]
+        id: String,
     },
 }
 
@@ -96,7 +138,7 @@ enum ExperimentSubcommand {
         #[arg(short = 'P', long)]
         project: String,
     },
-    /// Replace a draft experiment from YAML.
+    /// Replace a draft or stopped experiment from YAML.
     Update {
         #[arg(short, long)]
         file: PathBuf,
@@ -129,7 +171,7 @@ enum ExperimentSubcommand {
         #[arg(short = 'P', long)]
         project: String,
     },
-    /// Delete an experiment and its assignments.
+    /// Delete an experiment and its recorded data.
     Delete {
         #[arg(short = 'N', long)]
         name: String,
@@ -181,23 +223,44 @@ struct ErrorOutput {
 struct ProjectResponse {
     id: String,
     url: String,
-    token: String,
-    api_key: String,
+    token: ProjectTokenSecret,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct ProjectDetails {
     id: String,
     url: String,
-    token: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct ProjectView {
     id: String,
     url: String,
-    token: String,
+    tokens: Vec<ProjectToken>,
     experiments: Vec<ExperimentView>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+enum TokenAccess {
+    ReadOnly,
+    ReadWrite,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ProjectToken {
+    id: String,
+    name: String,
+    access: TokenAccess,
+    prefix: String,
+    created_at: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ProjectTokenSecret {
+    #[serde(flatten)]
+    details: ProjectToken,
+    token: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -218,8 +281,8 @@ struct AccountDetails {
 struct ExperimentDefinition {
     name: String,
     description: String,
-    #[serde(default = "default_assignment_unit")]
-    assignment_unit: String,
+    #[serde(default = "default_assignment")]
+    assignment: String,
     groups: Vec<ExperimentGroup>,
 }
 
@@ -236,12 +299,12 @@ struct ExperimentGroup {
 struct ExperimentView {
     name: String,
     description: String,
-    assignment_unit: String,
+    assignment: String,
     status: String,
     groups: Vec<ExperimentGroup>,
 }
 
-fn default_assignment_unit() -> String {
+fn default_assignment() -> String {
     "subject_id".into()
 }
 
@@ -254,7 +317,7 @@ struct Api {
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        let output = noyalib::to_string(&ErrorOutput {
+        let output = serde_yaml_ng::to_string(&ErrorOutput {
             error: format!("{error:#}"),
         })
         .unwrap_or_else(|_| "error: unknown error\n".into());
@@ -276,8 +339,13 @@ async fn run() -> anyhow::Result<()> {
         .unwrap_or_else(|| "https://api.statespace.com".into())
         .trim_end_matches('/')
         .to_owned();
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .user_agent(concat!("statespace-cli/", env!("CARGO_PKG_VERSION")))
+        .build()?;
     let api = Api {
-        client: Client::new(),
+        client,
         endpoint: endpoint.clone(),
         token: cli.token.clone().or_else(|| settings.token.clone()),
     };
@@ -306,6 +374,12 @@ async fn run() -> anyhow::Result<()> {
                 account: complete.account,
             })?;
         }
+        Command::Logout => {
+            settings.endpoint = Some(endpoint);
+            settings.token = None;
+            settings.save()?;
+            print_yaml(&json!({ "status": "logged-out" }))?;
+        }
         Command::Project(command) => match command.command {
             ProjectSubcommand::Create { name } => {
                 let response = api
@@ -326,22 +400,69 @@ async fn run() -> anyhow::Result<()> {
                     .await?;
                 print_yaml(&decode::<ProjectView>(response).await?)?;
             }
+            ProjectSubcommand::Token(command) => run_project_token(&api, command).await?,
         },
         Command::Account => {
             let response = api.request(Method::GET, "/v1/account")?.send().await?;
             print_yaml(&decode::<AccountDetails>(response).await?)?;
         }
-        Command::Admin(command) => match command.command {
-            AdminSubcommand::SetPlan { account, plan } => {
-                let response = api
-                    .request(Method::PATCH, &format!("/v1/admin/accounts/{account}"))?
-                    .json(&json!({ "plan": plan }))
-                    .send()
-                    .await?;
-                print_yaml(&decode::<AccountDetails>(response).await?)?;
+        Command::Admin(command) => {
+            let admin_api = Api {
+                client: api.client.clone(),
+                endpoint: api.endpoint.clone(),
+                token: Some(
+                    std::env::var("STATESPACE_ADMIN_TOKEN")
+                        .context("STATESPACE_ADMIN_TOKEN is required")?,
+                ),
+            };
+            match command.command {
+                AdminSubcommand::SetPlan { account, plan } => {
+                    let response = admin_api
+                        .request(Method::PATCH, &format!("/v1/admin/accounts/{account}"))?
+                        .json(&json!({ "plan": plan }))
+                        .send()
+                        .await?;
+                    print_yaml(&decode::<AccountDetails>(response).await?)?;
+                }
             }
-        },
+        }
         Command::Experiment(command) => run_experiment(&api, command).await?,
+    }
+    Ok(())
+}
+
+async fn run_project_token(api: &Api, command: ProjectTokenCommand) -> anyhow::Result<()> {
+    match command.command {
+        ProjectTokenSubcommand::Create {
+            project,
+            name,
+            access,
+        } => {
+            let response = api
+                .request(Method::POST, &format!("/v1/projects/{project}/tokens"))?
+                .json(&json!({ "name": name, "access": access }))
+                .send()
+                .await?;
+            print_yaml(&decode::<ProjectTokenSecret>(response).await?)?;
+        }
+        ProjectTokenSubcommand::List { project } => {
+            let response = api
+                .request(Method::GET, &format!("/v1/projects/{project}/tokens"))?
+                .send()
+                .await?;
+            print_yaml(&decode::<Vec<ProjectToken>>(response).await?)?;
+        }
+        ProjectTokenSubcommand::Revoke { project, id } => {
+            let response = api
+                .request(
+                    Method::DELETE,
+                    &format!("/v1/projects/{project}/tokens/{id}"),
+                )?
+                .send()
+                .await?;
+            ensure_success(response).await?;
+            print_yaml(&json!({ "revoked": id }))?;
+        }
     }
     Ok(())
 }
@@ -490,6 +611,9 @@ async fn decode<T: serde::de::DeserializeOwned>(response: Response) -> anyhow::R
     let status = response.status();
     let bytes = response.bytes().await?;
     if !status.is_success() {
+        if status == StatusCode::UNAUTHORIZED {
+            bail!("session expired or invalid; run ssp login");
+        }
         let message = serde_json::from_slice::<Value>(&bytes)
             .ok()
             .and_then(|value| value.get("error")?.as_str().map(ToOwned::to_owned))
@@ -505,6 +629,9 @@ async fn ensure_success(response: Response) -> anyhow::Result<()> {
         return Ok(());
     }
     let bytes = response.bytes().await?;
+    if status == StatusCode::UNAUTHORIZED {
+        bail!("session expired or invalid; run ssp login");
+    }
     let message = serde_json::from_slice::<Value>(&bytes)
         .ok()
         .and_then(|value| value.get("error")?.as_str().map(ToOwned::to_owned))
@@ -544,14 +671,27 @@ fn read_experiment_definition(path: &Path) -> anyhow::Result<ExperimentDefinitio
 }
 
 fn parse_experiment_definition(contents: &str) -> anyhow::Result<ExperimentDefinition> {
-    let definition: ExperimentDefinition = noyalib::from_str(contents)?;
+    let definition: ExperimentDefinition = serde_yaml_ng::from_str(contents)?;
+    if definition.name.trim().is_empty() {
+        bail!("experiment name must not be empty");
+    }
     if definition.description.trim().is_empty() {
         bail!("experiment description must not be empty");
+    }
+    if definition.assignment.trim().is_empty() {
+        bail!("experiment assignment must not be empty");
     }
     if definition.groups.is_empty() {
         bail!("experiment file must define at least one treatment group");
     }
+    let mut group_names = HashSet::with_capacity(definition.groups.len());
     for group in &definition.groups {
+        if group.name.trim().is_empty() {
+            bail!("group name must not be empty");
+        }
+        if !group_names.insert(group.name.as_str()) {
+            bail!("group names must be unique");
+        }
         if !group.weight.is_finite() || group.weight <= 0.0 {
             bail!("group weight must be a finite number greater than zero");
         }
@@ -568,12 +708,17 @@ fn parse_experiment_definition(contents: &str) -> anyhow::Result<ExperimentDefin
         if treatment_weight >= 1.0 {
             bail!("treatment weights must leave a positive weight for the default control group");
         }
+    } else {
+        let total_weight: f64 = definition.groups.iter().map(|group| group.weight).sum();
+        if (total_weight - 1.0).abs() > 0.000000001 {
+            bail!("group weights must sum to one when control is explicit");
+        }
     }
     Ok(definition)
 }
 
-fn print_yaml<T: Serialize + ?Sized>(value: &T) -> anyhow::Result<()> {
-    let output = noyalib::to_string(value)?;
+fn print_yaml<T: Serialize>(value: &T) -> anyhow::Result<()> {
+    let output = serde_yaml_ng::to_string(value)?;
     print!("{output}");
     if !output.ends_with('\n') {
         println!();
@@ -590,6 +735,10 @@ mod tests {
         assert!(matches!(
             Cli::try_parse_from(["ssp", "login"]).unwrap().command,
             Command::Login { .. }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["ssp", "logout"]).unwrap().command,
+            Command::Logout
         ));
         assert!(matches!(
             Cli::try_parse_from(["ssp", "project", "create", "-N", "support-agents"])
@@ -610,6 +759,30 @@ mod tests {
             Command::Project(_)
         ));
         assert!(Cli::try_parse_from(["ssp", "create", "--name", "support-agents"]).is_err());
+        Cli::try_parse_from([
+            "ssp",
+            "project",
+            "token",
+            "create",
+            "-P",
+            "support-agents",
+            "-N",
+            "production",
+            "--access",
+            "read-write",
+        ])
+        .unwrap();
+        Cli::try_parse_from([
+            "ssp",
+            "project",
+            "token",
+            "revoke",
+            "--project",
+            "support-agents",
+            "--id",
+            "tok_123",
+        ])
+        .unwrap();
     }
 
     #[test]
@@ -664,7 +837,7 @@ mod tests {
             "name: ranking-v2\ndescription: Compare two ranking models.\ngroups:\n  - name: treatment\n    weight: 0.5\n    config:\n      model: gpt-5\n",
         )
         .unwrap();
-        assert_eq!(definition.assignment_unit, "subject_id");
+        assert_eq!(definition.assignment, "subject_id");
         assert_eq!(definition.groups[0].config["model"], "gpt-5");
     }
 
@@ -674,5 +847,34 @@ mod tests {
             "name: ranking-v2\ngroups:\n  - name: treatment\n    weight: 0.5\n",
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_assignment_and_groups() {
+        let empty_assignment = parse_experiment_definition(
+            "name: ranking-v2\ndescription: Test ranking.\nassignment: ''\ngroups:\n  - name: treatment\n    weight: 0.5\n",
+        );
+        assert!(empty_assignment.is_err());
+
+        let duplicate_groups = parse_experiment_definition(
+            "name: ranking-v2\ndescription: Test ranking.\ngroups:\n  - name: treatment\n    weight: 0.2\n  - name: treatment\n    weight: 0.2\n",
+        );
+        assert!(duplicate_groups.is_err());
+
+        let invalid_explicit_control = parse_experiment_definition(
+            "name: ranking-v2\ndescription: Test ranking.\ngroups:\n  - name: control\n    weight: 0.5\n  - name: treatment\n    weight: 0.4\n",
+        );
+        assert!(invalid_explicit_control.is_err());
+    }
+
+    #[test]
+    fn requires_login_for_account_requests() {
+        let api = Api {
+            client: Client::new(),
+            endpoint: "https://api.statespace.com".into(),
+            token: None,
+        };
+        let error = api.request(Method::GET, "/v1/projects").unwrap_err();
+        assert_eq!(error.to_string(), "not logged in; run ssp login");
     }
 }
