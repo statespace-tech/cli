@@ -86,7 +86,13 @@ experiment = Experiment.connect(
     token="ssp_rw_7j...",
 )
 
-for subject_id, query in [("u_42", "query goes here")]:
+samples = [
+    ("u_42", "query goes here"),
+    ("u_73", "another query goes here"),
+    ("u_91", "final query goes here"),
+]
+
+for subject_id, query in samples:
     run = experiment.run(subject_id)
     reranker = run.config.get("reranker", None)
     search(query, reranker=reranker)
