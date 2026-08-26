@@ -16,8 +16,12 @@ Install stable Rust.
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked
-cargo package --locked --allow-dirty
+cargo package --locked
+sh -n install.sh
+shellcheck install.sh
 ```
+
+The project supports Rust 1.85 and later. CI verifies the minimum supported Rust version separately.
 
 Read the nearest `AGENTS.md` before you change a project. Update documentation and tests when you change a public interface.
 

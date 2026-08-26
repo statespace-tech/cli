@@ -14,4 +14,4 @@ We will confirm receipt, assess severity, and coordinate a fix and disclosure. W
 
 ## Sensitive data
 
-Treat API keys, admin tokens, read tokens, and capability URLs as secrets. A person who has a capability URL can read the resource that it identifies.
+Treat account sessions, admin tokens, and project tokens as secrets. Database URLs identify projects, but a valid project token is required for access.

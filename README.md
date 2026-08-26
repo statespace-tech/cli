@@ -20,9 +20,11 @@
 
 **Website: [https://statespace.com](https://statespace.com/)**
 
+**Docs for agents:** [AGENTS.md](https://github.com/statespace-tech/cli/blob/main/AGENTS.md)
+
 ---
 
-Statespace is a headless A/B testing platform that lets your coding agent quickly set up experiments for product features, and then analyze the results with SQL.
+Statespace is a headless A/B testing platform for coding agents. Define product experiments and analyze the results with SQL.
 
 ## Install
 
@@ -34,52 +36,20 @@ curl -fsSL https://statespace.com/install | bash
 
 ## Quickstart
 
-Sign in with GitHub or Google. Statespace creates a free account on your first login.
+### Create it
 
-```bash
-ssp login
-```
-
-Print the activation URL when the CLI cannot open a browser.
-
-```bash
-ssp login --no-open
-```
-
-Create a globally named project after authentication.
+Create a project with a globally unique name. The command returns a default read-write token once.
 
 ```bash
 ssp project create --name atlas-search
-ssp project list
 ```
 
-Show the project, its database credentials, and its experiments.
-
-```bash
-ssp project show --name atlas-search
-```
-
-```yaml
-id: atlas-search
-url: quack:atlas-search.db.statespace.app:443
-token: st_7JmK4qN9xR2vL8cW5pT6hY3s
-experiments: []
-```
-
-Show the account plan and its enforced limits.
-
-```bash
-ssp account
-```
-
-### Experiment
-
-Define the experiment in YAML.
+Save the experiment definition as `experiment.yaml`. The control group is added automatically.
 
 ```yaml
 name: rank-v2
 description: Test reciprocal rank fusion.
-assignment_unit: subject_id
+assignment: subject_id
 groups:
   - name: treatment
     weight: 0.2
@@ -87,51 +57,51 @@ groups:
       reranker: rrf
 ```
 
-Statespace adds the required `control` group with the remaining weight and an empty configuration.
-
-Create or replace the definition while the experiment is in `draft`.
+Create and start the experiment.
 
 ```bash
 ssp experiment create --project atlas-search --file experiment.yaml
-ssp experiment update --project atlas-search --file experiment.yaml
-```
-
-Inspect and control the experiment lifecycle.
-
-```bash
-ssp experiment list --project atlas-search
-ssp experiment show --project atlas-search --name rank-v2
 ssp experiment start --project atlas-search --name rank-v2
-ssp experiment stop --project atlas-search --name rank-v2
-ssp experiment delete --project atlas-search --name rank-v2
 ```
 
-## Run with Python
+### Run it
 
-Add the Python SDK to the application that will run the experiment.
+Install the [Python SDK](https://github.com/statespace-tech/python-sdk) or [TypeScript SDK](https://github.com/statespace-tech/ts-sdk).
 
 ```bash
+# Python
 uv add statespace-sdk
+
+# TypeScript
+npm install @statespace/sdk
 ```
 
 Run the configured experiment and record its result.
 
 ```python
-from statespace import experiment
+from statespace import Experiment
 
-with experiment("rank-v2", subject_id="u_42") as exp:
-    r = exp.get("reranker", default=None)
-    search("query goes here", reranker=r)
-    exp.outcome("relevance", value=0.7)
+experiment = Experiment.connect(
+    "atlas-search/rank-v2",
+    token="ss_rw_7j...",
+)
+
+for subject_id, query in [("u_42", "query goes here")]:
+    run = experiment.run(subject_id)
+    reranker = run.config.get("reranker", None)
+    search(query, reranker=reranker)
+    run.outcome("relevance", value=0.7)
+
+experiment.close()
 ```
 
-## SQL
+### Analyze it
 
-Query experiment outcomes directly through DuckDB v2's standard Quack protocol.
+Use your coding agent to query the experiment through DuckDB v2.0 and the [Quack protocol](https://duckdb.org/docs/current/quack/overview).
 
 ```bash
 duckdb -c "ATTACH 'quack:atlas-search.db.statespace.app:443' AS statespace (
-        TOKEN 'st_7JmK4qN9xR2vL8cW5pT6hY3s'
+        TOKEN 'ss_rw_7j...'
       );
       SELECT
         group_name,
@@ -143,11 +113,11 @@ duckdb -c "ATTACH 'quack:atlas-search.db.statespace.app:443' AS statespace (
       GROUP BY group_name"
 ```
 
-Estimate the treatment effect with DuckDB regression aggregates.
+Estimate the treatment effect with DuckDB [statistical aggregate functions](https://duckdb.org/docs/lts/sql/functions/aggregates).
 
 ```bash
 duckdb -c "ATTACH 'quack:atlas-search.db.statespace.app:443' AS statespace (
-        TOKEN 'st_7JmK4qN9xR2vL8cW5pT6hY3s'
+        TOKEN 'ss_rw_7j...'
       );
       WITH results AS (
         SELECT
