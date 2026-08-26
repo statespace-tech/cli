@@ -64,6 +64,12 @@ Show one project, its active token metadata, and its experiments.
 ssp project show --name atlas-search
 ```
 
+Delete a project and all of its experiment data. This action is permanent.
+
+```bash
+ssp project delete --name atlas-search --yes
+```
+
 The CLI is stateless. Always identify a project with `--name` or `--project` as required by the command.
 
 ## Manage project tokens

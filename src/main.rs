@@ -77,6 +77,14 @@ enum ProjectSubcommand {
         #[arg(short = 'N', long)]
         name: String,
     },
+    /// Delete a project and all of its experiment data.
+    Delete {
+        #[arg(short = 'N', long)]
+        name: String,
+        /// Confirm permanent deletion.
+        #[arg(long, required = true)]
+        yes: bool,
+    },
     /// Manage project access tokens.
     Token(ProjectTokenCommand),
 }
@@ -399,6 +407,14 @@ async fn run() -> anyhow::Result<()> {
                     .send()
                     .await?;
                 print_yaml(&decode::<ProjectView>(response).await?)?;
+            }
+            ProjectSubcommand::Delete { name, yes: _ } => {
+                let response = api
+                    .request(Method::DELETE, &format!("/v1/projects/{name}"))?
+                    .send()
+                    .await?;
+                ensure_success(response).await?;
+                print_yaml(&json!({ "deleted": name }))?;
             }
             ProjectSubcommand::Token(command) => run_project_token(&api, command).await?,
         },
@@ -758,6 +774,18 @@ mod tests {
                 .command,
             Command::Project(_)
         ));
+        assert!(
+            Cli::try_parse_from(["ssp", "project", "delete", "--name", "support-agents"]).is_err()
+        );
+        Cli::try_parse_from([
+            "ssp",
+            "project",
+            "delete",
+            "--name",
+            "support-agents",
+            "--yes",
+        ])
+        .unwrap();
         assert!(Cli::try_parse_from(["ssp", "create", "--name", "support-agents"]).is_err());
         Cli::try_parse_from([
             "ssp",
