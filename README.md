@@ -83,7 +83,7 @@ from statespace import Experiment
 
 experiment = Experiment.connect(
     "atlas-search/rank-v2",
-    token="ss_rw_7j...",
+    token="ssp_rw_7j...",
 )
 
 for subject_id, query in [("u_42", "query goes here")]:
@@ -101,7 +101,7 @@ Use your coding agent to query the experiment through DuckDB v2.0 and the [Quack
 
 ```bash
 duckdb -c "ATTACH 'quack:atlas-search.db.statespace.app:443' AS statespace (
-        TOKEN 'ss_rw_7j...'
+        TOKEN 'ssp_rw_7j...'
       );
       SELECT
         group_name,
@@ -117,7 +117,7 @@ Estimate the treatment effect with DuckDB [statistical aggregate functions](http
 
 ```bash
 duckdb -c "ATTACH 'quack:atlas-search.db.statespace.app:443' AS statespace (
-        TOKEN 'ss_rw_7j...'
+        TOKEN 'ssp_rw_7j...'
       );
       WITH results AS (
         SELECT

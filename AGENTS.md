@@ -152,22 +152,22 @@ Stop an experiment before you change its configuration. Do not create or edit in
 Use a read-write project token in the runtime application.
 
 ```bash
-export STATESPACE_TOKEN=ss_rw_...
+export STATESPACE_TOKEN=ssp_rw_...
 ```
 
-For Python, use [`statespace-tech/python-sdk`](https://github.com/statespace-tech/python-sdk). Connect to an experiment, create a run for each exposure, read `run.config`, and record results with `run.outcome(...)`. Use `Project.query(...)` for SQL.
+For Python, use [`statespace-tech/python-sdk`](https://github.com/statespace-tech/python-sdk). Connect to an experiment, create a run for each exposure, read `run.config`, and record results with `run.outcome(...)`.
 
-For TypeScript, use [`statespace-tech/ts-sdk`](https://github.com/statespace-tech/ts-sdk). Follow that repository for its runtime and query APIs.
+For TypeScript, use [`statespace-tech/ts-sdk`](https://github.com/statespace-tech/ts-sdk). Follow that repository for its runtime API.
 
 Do not define groups in application code. Read the assigned configuration from the SDK and provide an explicit default for each value.
 
 ## Query results
 
-Use DuckDB 2.0 or later to connect through the standard Quack protocol. Use either a read-only or read-write project token.
+Use DuckDB 2.0 or later directly through the standard Quack protocol. Use either a read-only or read-write project token.
 
 ```sql
 ATTACH 'quack:atlas-search.db.statespace.app:443' AS statespace (
-  TOKEN 'ss_ro_...'
+  TOKEN 'ssp_ro_...'
 );
 
 SELECT
