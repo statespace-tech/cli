@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -40,14 +39,14 @@ enum Command {
     },
     /// Remove the saved account session.
     Logout,
-    /// Manage projects.
-    Project(ProjectCommand),
+    /// Manage runtime and database tokens.
+    Token(TokenCommand),
     /// Show the signed-in account and enforced plan limits.
     Account,
     #[command(hide = true)]
     /// Run internal service administration commands.
     Admin(AdminCommand),
-    /// Manage experiments in a project.
+    /// Manage experiments.
     Experiment(ExperimentCommand),
 }
 
@@ -58,63 +57,24 @@ struct AdminCommand {
 }
 
 #[derive(Args)]
-struct ProjectCommand {
+struct TokenCommand {
     #[command(subcommand)]
-    command: ProjectSubcommand,
+    command: TokenSubcommand,
 }
 
 #[derive(Subcommand)]
-enum ProjectSubcommand {
-    /// Create a globally named project.
+enum TokenSubcommand {
+    /// Create a database token and print its secret once.
     Create {
-        #[arg(short = 'N', long)]
-        name: String,
-    },
-    /// List all projects.
-    List,
-    /// Show one project, its tokens, and its experiments.
-    Show {
-        #[arg(short = 'N', long)]
-        name: String,
-    },
-    /// Delete a project and all of its experiment data.
-    Delete {
-        #[arg(short = 'N', long)]
-        name: String,
-        /// Confirm permanent deletion.
-        #[arg(long, required = true)]
-        yes: bool,
-    },
-    /// Manage project access tokens.
-    Token(ProjectTokenCommand),
-}
-
-#[derive(Args)]
-struct ProjectTokenCommand {
-    #[command(subcommand)]
-    command: ProjectTokenSubcommand,
-}
-
-#[derive(Subcommand)]
-enum ProjectTokenSubcommand {
-    /// Create a project token and print its secret once.
-    Create {
-        #[arg(short = 'P', long)]
-        project: String,
-        #[arg(short = 'N', long)]
+        #[arg(short = 'n', long)]
         name: String,
         #[arg(long)]
         access: TokenAccess,
     },
-    /// List active project tokens without their secrets.
-    List {
-        #[arg(short = 'P', long)]
-        project: String,
-    },
-    /// Revoke a project token.
+    /// List active database tokens without their secrets.
+    List,
+    /// Revoke a database token.
     Revoke {
-        #[arg(short = 'P', long)]
-        project: String,
         #[arg(long)]
         id: String,
     },
@@ -139,52 +99,80 @@ struct ExperimentCommand {
 
 #[derive(Subcommand)]
 enum ExperimentSubcommand {
-    /// Create an experiment from YAML.
-    Create {
-        #[arg(short, long)]
-        file: PathBuf,
-        #[arg(short = 'P', long)]
-        project: String,
-    },
-    /// Replace a draft or stopped experiment from YAML.
-    Update {
-        #[arg(short, long)]
-        file: PathBuf,
-        #[arg(short = 'P', long)]
-        project: String,
-    },
     /// List experiments.
-    List {
-        #[arg(short = 'P', long)]
-        project: String,
-    },
+    List,
     /// Show one experiment.
     Show {
-        #[arg(short = 'N', long)]
+        #[arg(short = 'n', long)]
         name: String,
-        #[arg(short = 'P', long)]
-        project: String,
     },
-    /// Start an experiment.
+    /// Start or restart an experiment.
     Start {
-        #[arg(short = 'N', long)]
+        #[arg(short = 'n', long)]
         name: String,
-        #[arg(short = 'P', long)]
-        project: String,
     },
     /// Stop an experiment.
     Stop {
-        #[arg(short = 'N', long)]
+        #[arg(short = 'n', long)]
         name: String,
-        #[arg(short = 'P', long)]
-        project: String,
     },
     /// Delete an experiment and its recorded data.
     Delete {
-        #[arg(short = 'N', long)]
+        #[arg(short = 'n', long)]
         name: String,
-        #[arg(short = 'P', long)]
-        project: String,
+    },
+    /// Change live experiment traffic.
+    Traffic(ExperimentTrafficCommand),
+    /// Manage exclusion layers.
+    Layer(ExperimentLayerCommand),
+}
+
+#[derive(Args)]
+struct ExperimentTrafficCommand {
+    #[command(subcommand)]
+    command: ExperimentTrafficSubcommand,
+}
+
+#[derive(Subcommand)]
+enum ExperimentTrafficSubcommand {
+    /// Increase traffic for a running experiment.
+    Set {
+        #[arg(short = 'n', long)]
+        name: String,
+        #[arg(long)]
+        traffic: f64,
+    },
+}
+
+#[derive(Args)]
+struct ExperimentLayerCommand {
+    #[command(subcommand)]
+    command: ExperimentLayerSubcommand,
+}
+
+#[derive(Subcommand)]
+enum ExperimentLayerSubcommand {
+    /// Create an exclusion layer from YAML.
+    Create {
+        #[arg(short, long)]
+        file: PathBuf,
+    },
+    /// Replace an exclusion layer from YAML.
+    Update {
+        #[arg(short, long)]
+        file: PathBuf,
+    },
+    /// List exclusion layers.
+    List,
+    /// Show one exclusion layer.
+    Show {
+        #[arg(short = 'n', long)]
+        name: String,
+    },
+    /// Delete an unused exclusion layer.
+    Delete {
+        #[arg(short = 'n', long)]
+        name: String,
     },
 }
 
@@ -205,47 +193,17 @@ struct LoginStart {
 #[derive(Debug, Deserialize)]
 struct LoginComplete {
     token: String,
-    account: LoginAccount,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct LoginAccount {
-    id: String,
-    provider: String,
-    login: String,
-    plan: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct LoginOutput {
     status: &'static str,
-    account: LoginAccount,
+    account: AccountDetails,
 }
 
 #[derive(Serialize)]
 struct ErrorOutput {
     error: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct ProjectResponse {
-    id: String,
-    url: String,
-    token: ProjectTokenSecret,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct ProjectDetails {
-    id: String,
-    url: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct ProjectView {
-    id: String,
-    url: String,
-    tokens: Vec<ProjectToken>,
-    experiments: Vec<ExperimentView>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, ValueEnum)]
@@ -256,7 +214,7 @@ enum TokenAccess {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct ProjectToken {
+struct DatabaseToken {
     id: String,
     name: String,
     access: TokenAccess,
@@ -265,9 +223,9 @@ struct ProjectToken {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct ProjectTokenSecret {
+struct DatabaseTokenSecret {
     #[serde(flatten)]
-    details: ProjectToken,
+    details: DatabaseToken,
     token: String,
 }
 
@@ -281,17 +239,60 @@ struct AccountDetails {
     storage_limit_bytes: Option<u64>,
     write_events_per_minute: Option<u64>,
     retention_days: Option<u64>,
-    project_limit: Option<u64>,
+    database_url: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(untagged)]
+enum AssignmentDefinition {
+    Unit(String),
+    Advanced(AssignmentConfig),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-struct ExperimentDefinition {
-    name: String,
-    description: String,
-    #[serde(default = "default_assignment")]
-    assignment: String,
-    groups: Vec<ExperimentGroup>,
+struct AssignmentConfig {
+    unit: String,
+    #[serde(default)]
+    method: AssignmentMethod,
+    #[serde(default = "default_block_size")]
+    block_size: u32,
+    #[serde(default)]
+    strata: Vec<String>,
+}
+
+fn default_block_size() -> u32 {
+    4
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum AssignmentMethod {
+    #[default]
+    Random,
+    Stratified,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ExperimentAllocation {
+    #[serde(default = "default_traffic")]
+    traffic: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    layer: Option<String>,
+}
+
+impl Default for ExperimentAllocation {
+    fn default() -> Self {
+        Self {
+            traffic: default_traffic(),
+            layer: None,
+        }
+    }
+}
+
+fn default_traffic() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -307,13 +308,34 @@ struct ExperimentGroup {
 struct ExperimentView {
     name: String,
     description: String,
-    assignment: String,
+    assignment: AssignmentDefinition,
+    allocation: ExperimentAllocation,
     status: String,
     groups: Vec<ExperimentGroup>,
 }
 
-fn default_assignment() -> String {
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LayerDefinition {
+    name: String,
+    description: String,
+    #[serde(default = "default_layer_assignment")]
+    assignment: String,
+    #[serde(default)]
+    holdout: f64,
+}
+
+fn default_layer_assignment() -> String {
     "subject_id".into()
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ExperimentLayer {
+    name: String,
+    description: String,
+    assignment: String,
+    holdout: f64,
+    experiments: Vec<String>,
 }
 
 struct Api {
@@ -357,7 +379,6 @@ async fn run() -> anyhow::Result<()> {
         endpoint: endpoint.clone(),
         token: cli.token.clone().or_else(|| settings.token.clone()),
     };
-
     match cli.command {
         Command::Login { no_open } => {
             let login = start_login(&api).await?;
@@ -369,6 +390,18 @@ async fn run() -> anyhow::Result<()> {
                 eprintln!("Complete sign-in in your browser.");
             }
             let complete = wait_for_login(&api, &login).await?;
+            let authenticated_api = Api {
+                client: api.client.clone(),
+                endpoint: api.endpoint.clone(),
+                token: Some(complete.token.clone()),
+            };
+            let account = decode::<AccountDetails>(
+                authenticated_api
+                    .request(Method::GET, "/v1/account")?
+                    .send()
+                    .await?,
+            )
+            .await?;
             settings = Settings {
                 endpoint: Some(endpoint),
                 token: Some(complete.token),
@@ -379,7 +412,7 @@ async fn run() -> anyhow::Result<()> {
             }
             print_yaml(&LoginOutput {
                 status: "authenticated",
-                account: complete.account,
+                account,
             })?;
         }
         Command::Logout => {
@@ -388,36 +421,7 @@ async fn run() -> anyhow::Result<()> {
             settings.save()?;
             print_yaml(&json!({ "status": "logged-out" }))?;
         }
-        Command::Project(command) => match command.command {
-            ProjectSubcommand::Create { name } => {
-                let response = api
-                    .request(Method::POST, "/v1/projects")?
-                    .json(&json!({ "name": name }))
-                    .send()
-                    .await?;
-                print_yaml(&decode::<ProjectResponse>(response).await?)?;
-            }
-            ProjectSubcommand::List => {
-                let response = api.request(Method::GET, "/v1/projects")?.send().await?;
-                print_yaml(&decode::<Vec<ProjectDetails>>(response).await?)?;
-            }
-            ProjectSubcommand::Show { name } => {
-                let response = api
-                    .request(Method::GET, &format!("/v1/projects/{name}"))?
-                    .send()
-                    .await?;
-                print_yaml(&decode::<ProjectView>(response).await?)?;
-            }
-            ProjectSubcommand::Delete { name, yes: _ } => {
-                let response = api
-                    .request(Method::DELETE, &format!("/v1/projects/{name}"))?
-                    .send()
-                    .await?;
-                ensure_success(response).await?;
-                print_yaml(&json!({ "deleted": name }))?;
-            }
-            ProjectSubcommand::Token(command) => run_project_token(&api, command).await?,
-        },
+        Command::Token(command) => run_token(&api, command).await?,
         Command::Account => {
             let response = api.request(Method::GET, "/v1/account")?.send().await?;
             print_yaml(&decode::<AccountDetails>(response).await?)?;
@@ -447,33 +451,23 @@ async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_project_token(api: &Api, command: ProjectTokenCommand) -> anyhow::Result<()> {
+async fn run_token(api: &Api, command: TokenCommand) -> anyhow::Result<()> {
     match command.command {
-        ProjectTokenSubcommand::Create {
-            project,
-            name,
-            access,
-        } => {
+        TokenSubcommand::Create { name, access } => {
             let response = api
-                .request(Method::POST, &format!("/v1/projects/{project}/tokens"))?
+                .request(Method::POST, "/v1/tokens")?
                 .json(&json!({ "name": name, "access": access }))
                 .send()
                 .await?;
-            print_yaml(&decode::<ProjectTokenSecret>(response).await?)?;
+            print_yaml(&decode::<DatabaseTokenSecret>(response).await?)?;
         }
-        ProjectTokenSubcommand::List { project } => {
-            let response = api
-                .request(Method::GET, &format!("/v1/projects/{project}/tokens"))?
-                .send()
-                .await?;
-            print_yaml(&decode::<Vec<ProjectToken>>(response).await?)?;
+        TokenSubcommand::List => {
+            let response = api.request(Method::GET, "/v1/tokens")?.send().await?;
+            print_yaml(&decode::<Vec<DatabaseToken>>(response).await?)?;
         }
-        ProjectTokenSubcommand::Revoke { project, id } => {
+        TokenSubcommand::Revoke { id } => {
             let response = api
-                .request(
-                    Method::DELETE,
-                    &format!("/v1/projects/{project}/tokens/{id}"),
-                )?
+                .request(Method::DELETE, &format!("/v1/tokens/{id}"))?
                 .send()
                 .await?;
             ensure_success(response).await?;
@@ -512,55 +506,87 @@ async fn wait_for_login(api: &Api, login: &LoginStart) -> anyhow::Result<LoginCo
 
 async fn run_experiment(api: &Api, command: ExperimentCommand) -> anyhow::Result<()> {
     match command.command {
-        ExperimentSubcommand::Create { file, project } => {
-            let definition = read_experiment_definition(&file)?;
-            let response = api
-                .project_request(Method::POST, "/v1/experiments", &project)?
-                .json(&definition)
-                .send()
-                .await?;
-            print_yaml(&decode::<ExperimentView>(response).await?)?;
-        }
-        ExperimentSubcommand::Update { file, project } => {
-            let definition = read_experiment_definition(&file)?;
-            let response = api
-                .project_request(
-                    Method::PUT,
-                    &format!("/v1/experiments/{}", definition.name),
-                    &project,
-                )?
-                .json(&definition)
-                .send()
-                .await?;
-            print_yaml(&decode::<ExperimentView>(response).await?)?;
-        }
-        ExperimentSubcommand::List { project } => {
-            let response = api
-                .project_request(Method::GET, "/v1/experiments", &project)?
-                .send()
-                .await?;
+        ExperimentSubcommand::List => {
+            let response = api.request(Method::GET, "/v1/experiments")?.send().await?;
             print_yaml(&decode::<Vec<ExperimentView>>(response).await?)?;
         }
-        ExperimentSubcommand::Show { name, project } => {
+        ExperimentSubcommand::Show { name } => {
             let response = api
-                .project_request(Method::GET, &format!("/v1/experiments/{name}"), &project)?
+                .request(Method::GET, &format!("/v1/experiments/{name}"))?
                 .send()
                 .await?;
             print_yaml(&decode::<ExperimentView>(response).await?)?;
         }
-        ExperimentSubcommand::Start { name, project } => {
-            set_experiment_status(api, &project, &name, "running").await?;
+        ExperimentSubcommand::Start { name } => {
+            set_experiment_status(api, &name, "running").await?;
         }
-        ExperimentSubcommand::Stop { name, project } => {
-            set_experiment_status(api, &project, &name, "stopped").await?;
+        ExperimentSubcommand::Stop { name } => {
+            set_experiment_status(api, &name, "stopped").await?;
         }
-        ExperimentSubcommand::Delete { name, project } => {
+        ExperimentSubcommand::Delete { name } => {
             let response = api
-                .project_request(Method::DELETE, &format!("/v1/experiments/{name}"), &project)?
+                .request(Method::DELETE, &format!("/v1/experiments/{name}"))?
                 .send()
                 .await?;
             ensure_success(response).await?;
             print_yaml(&json!({ "deleted": true, "experiment": name }))?;
+        }
+        ExperimentSubcommand::Traffic(command) => match command.command {
+            ExperimentTrafficSubcommand::Set { name, traffic } => {
+                if !traffic.is_finite() || traffic <= 0.0 || traffic > 1.0 {
+                    bail!("traffic must be greater than zero and no more than one");
+                }
+                let response = api
+                    .request(Method::POST, &format!("/v1/experiments/{name}/traffic"))?
+                    .json(&json!({ "traffic": traffic }))
+                    .send()
+                    .await?;
+                print_yaml(&decode::<ExperimentView>(response).await?)?;
+            }
+        },
+        ExperimentSubcommand::Layer(command) => run_experiment_layer(api, command).await?,
+    }
+    Ok(())
+}
+
+async fn run_experiment_layer(api: &Api, command: ExperimentLayerCommand) -> anyhow::Result<()> {
+    match command.command {
+        ExperimentLayerSubcommand::Create { file } => {
+            let definition = read_layer_definition(&file)?;
+            let response = api
+                .request(Method::POST, "/v1/layers")?
+                .json(&definition)
+                .send()
+                .await?;
+            print_yaml(&decode::<ExperimentLayer>(response).await?)?;
+        }
+        ExperimentLayerSubcommand::Update { file } => {
+            let definition = read_layer_definition(&file)?;
+            let response = api
+                .request(Method::PUT, &format!("/v1/layers/{}", definition.name))?
+                .json(&definition)
+                .send()
+                .await?;
+            print_yaml(&decode::<ExperimentLayer>(response).await?)?;
+        }
+        ExperimentLayerSubcommand::List => {
+            let response = api.request(Method::GET, "/v1/layers")?.send().await?;
+            print_yaml(&decode::<Vec<ExperimentLayer>>(response).await?)?;
+        }
+        ExperimentLayerSubcommand::Show { name } => {
+            let response = api
+                .request(Method::GET, &format!("/v1/layers/{name}"))?
+                .send()
+                .await?;
+            print_yaml(&decode::<ExperimentLayer>(response).await?)?;
+        }
+        ExperimentLayerSubcommand::Delete { name } => {
+            let response = api
+                .request(Method::DELETE, &format!("/v1/layers/{name}"))?
+                .send()
+                .await?;
+            ensure_success(response).await?;
+            print_yaml(&json!({ "deleted": true, "layer": name }))?;
         }
     }
     Ok(())
@@ -610,17 +636,6 @@ impl Api {
             .request(method, format!("{}{}", self.endpoint, path))
             .bearer_auth(token))
     }
-
-    fn project_request(
-        &self,
-        method: Method,
-        path: &str,
-        project: &str,
-    ) -> anyhow::Result<reqwest::RequestBuilder> {
-        Ok(self
-            .request(method, path)?
-            .header("X-Statespace-Project", project))
-    }
 }
 
 async fn decode<T: serde::de::DeserializeOwned>(response: Response) -> anyhow::Result<T> {
@@ -655,80 +670,41 @@ async fn ensure_success(response: Response) -> anyhow::Result<()> {
     bail!("server returned {status}: {message}")
 }
 
-async fn set_experiment_status(
-    api: &Api,
-    project: &str,
-    name: &str,
-    status: &str,
-) -> anyhow::Result<()> {
+async fn set_experiment_status(api: &Api, name: &str, status: &str) -> anyhow::Result<()> {
     let response = api
-        .project_request(
-            Method::POST,
-            &format!("/v1/experiments/{name}/state"),
-            project,
-        )?
+        .request(Method::POST, &format!("/v1/experiments/{name}/state"))?
         .json(&json!({ "status": status }))
         .send()
         .await?;
     print_yaml(&decode::<ExperimentView>(response).await?)
 }
 
-fn read_experiment_definition(path: &Path) -> anyhow::Result<ExperimentDefinition> {
+fn read_layer_definition(path: &Path) -> anyhow::Result<LayerDefinition> {
     if !matches!(
         path.extension().and_then(|value| value.to_str()),
         Some("yaml" | "yml")
     ) {
-        bail!("experiment definition must use a .yaml or .yml file");
+        bail!("layer definition must use a .yaml or .yml file");
     }
     let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("could not read experiment file: {}", path.display()))?;
-    parse_experiment_definition(&contents)
-        .with_context(|| format!("invalid experiment file: {}", path.display()))
+        .with_context(|| format!("could not read layer file: {}", path.display()))?;
+    parse_layer_definition(&contents)
+        .with_context(|| format!("invalid layer file: {}", path.display()))
 }
 
-fn parse_experiment_definition(contents: &str) -> anyhow::Result<ExperimentDefinition> {
-    let definition: ExperimentDefinition = serde_yaml_ng::from_str(contents)?;
+fn parse_layer_definition(contents: &str) -> anyhow::Result<LayerDefinition> {
+    let definition: LayerDefinition = serde_yaml_ng::from_str(contents)?;
     if definition.name.trim().is_empty() {
-        bail!("experiment name must not be empty");
+        bail!("layer name must not be empty");
     }
     if definition.description.trim().is_empty() {
-        bail!("experiment description must not be empty");
+        bail!("layer description must not be empty");
     }
     if definition.assignment.trim().is_empty() {
-        bail!("experiment assignment must not be empty");
+        bail!("layer assignment must not be empty");
     }
-    if definition.groups.is_empty() {
-        bail!("experiment file must define at least one treatment group");
-    }
-    let mut group_names = HashSet::with_capacity(definition.groups.len());
-    for group in &definition.groups {
-        if group.name.trim().is_empty() {
-            bail!("group name must not be empty");
-        }
-        if !group_names.insert(group.name.as_str()) {
-            bail!("group names must be unique");
-        }
-        if !group.weight.is_finite() || group.weight <= 0.0 {
-            bail!("group weight must be a finite number greater than zero");
-        }
-    }
-    let has_control = definition
-        .groups
-        .iter()
-        .any(|group| group.name == "control");
-    if has_control && definition.groups.len() < 2 {
-        bail!("an explicit control group requires at least one treatment group");
-    }
-    if !has_control {
-        let treatment_weight: f64 = definition.groups.iter().map(|group| group.weight).sum();
-        if treatment_weight >= 1.0 {
-            bail!("treatment weights must leave a positive weight for the default control group");
-        }
-    } else {
-        let total_weight: f64 = definition.groups.iter().map(|group| group.weight).sum();
-        if (total_weight - 1.0).abs() > 0.000000001 {
-            bail!("group weights must sum to one when control is explicit");
-        }
+    if !definition.holdout.is_finite() || !(0.0..1.0).contains(&definition.holdout) {
+        bail!("layer holdout must be at least zero and less than one");
     }
     Ok(definition)
 }
@@ -747,7 +723,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_project_commands_and_short_options() {
+    fn parses_account_token_and_short_options() {
         assert!(matches!(
             Cli::try_parse_from(["ssp", "login"]).unwrap().command,
             Command::Login { .. }
@@ -756,67 +732,39 @@ mod tests {
             Cli::try_parse_from(["ssp", "logout"]).unwrap().command,
             Command::Logout
         ));
-        assert!(matches!(
-            Cli::try_parse_from(["ssp", "project", "create", "-N", "support-agents"])
-                .unwrap()
-                .command,
-            Command::Project(_)
-        ));
-        assert!(matches!(
-            Cli::try_parse_from(["ssp", "project", "list"])
-                .unwrap()
-                .command,
-            Command::Project(_)
-        ));
-        assert!(matches!(
-            Cli::try_parse_from(["ssp", "project", "show", "--name", "support-agents"])
-                .unwrap()
-                .command,
-            Command::Project(_)
-        ));
-        assert!(
-            Cli::try_parse_from(["ssp", "project", "delete", "--name", "support-agents"]).is_err()
-        );
+        assert!(Cli::try_parse_from(["ssp", "entity", "show"]).is_err());
         Cli::try_parse_from([
             "ssp",
-            "project",
-            "delete",
-            "--name",
-            "support-agents",
-            "--yes",
-        ])
-        .unwrap();
-        assert!(Cli::try_parse_from(["ssp", "create", "--name", "support-agents"]).is_err());
-        Cli::try_parse_from([
-            "ssp",
-            "project",
             "token",
             "create",
-            "-P",
-            "support-agents",
-            "-N",
+            "-n",
             "production",
             "--access",
             "read-write",
         ])
         .unwrap();
-        Cli::try_parse_from([
-            "ssp",
-            "project",
-            "token",
-            "revoke",
-            "--project",
-            "support-agents",
-            "--id",
-            "tok_123",
-        ])
-        .unwrap();
+        Cli::try_parse_from(["ssp", "token", "revoke", "--id", "tok_123"]).unwrap();
+        assert!(
+            Cli::try_parse_from([
+                "ssp",
+                "token",
+                "create",
+                "-N",
+                "production",
+                "--access",
+                "read-write",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
-    fn requires_a_project_for_experiment_commands() {
-        Cli::try_parse_from(["ssp", "experiment", "list", "-P", "support-agents"]).unwrap();
-        assert!(Cli::try_parse_from(["ssp", "experiment", "list"]).is_err());
+    fn experiments_need_no_entity_option() {
+        Cli::try_parse_from(["ssp", "experiment", "list"]).unwrap();
+        Cli::try_parse_from(["ssp", "experiment", "start", "-n", "rank-v2"]).unwrap();
+        Cli::try_parse_from(["ssp", "experiment", "show", "-n", "rank-v2"]).unwrap();
+        assert!(Cli::try_parse_from(["ssp", "--entity", "acme", "experiment", "list"]).is_err());
+        assert!(Cli::try_parse_from(["ssp", "experiment", "create"]).is_err());
     }
 
     #[test]
@@ -860,39 +808,33 @@ mod tests {
     }
 
     #[test]
-    fn parses_yaml_experiment() {
-        let definition = parse_experiment_definition(
-            "name: ranking-v2\ndescription: Compare two ranking models.\ngroups:\n  - name: treatment\n    weight: 0.5\n    config:\n      model: gpt-5\n",
+    fn parses_layer_and_advanced_commands() {
+        let layer = parse_layer_definition(
+            "name: search-ranking\ndescription: Ranking experiments.\nassignment: subject_id\nholdout: 0.05\n",
         )
         .unwrap();
-        assert_eq!(definition.assignment, "subject_id");
-        assert_eq!(definition.groups[0].config["model"], "gpt-5");
-    }
+        assert_eq!(layer.holdout, 0.05);
 
-    #[test]
-    fn requires_an_experiment_description() {
-        let result = parse_experiment_definition(
-            "name: ranking-v2\ngroups:\n  - name: treatment\n    weight: 0.5\n",
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn rejects_invalid_assignment_and_groups() {
-        let empty_assignment = parse_experiment_definition(
-            "name: ranking-v2\ndescription: Test ranking.\nassignment: ''\ngroups:\n  - name: treatment\n    weight: 0.5\n",
-        );
-        assert!(empty_assignment.is_err());
-
-        let duplicate_groups = parse_experiment_definition(
-            "name: ranking-v2\ndescription: Test ranking.\ngroups:\n  - name: treatment\n    weight: 0.2\n  - name: treatment\n    weight: 0.2\n",
-        );
-        assert!(duplicate_groups.is_err());
-
-        let invalid_explicit_control = parse_experiment_definition(
-            "name: ranking-v2\ndescription: Test ranking.\ngroups:\n  - name: control\n    weight: 0.5\n  - name: treatment\n    weight: 0.4\n",
-        );
-        assert!(invalid_explicit_control.is_err());
+        Cli::try_parse_from([
+            "ssp",
+            "experiment",
+            "traffic",
+            "set",
+            "-n",
+            "rank-v2",
+            "--traffic",
+            "0.1",
+        ])
+        .unwrap();
+        Cli::try_parse_from([
+            "ssp",
+            "experiment",
+            "layer",
+            "create",
+            "--file",
+            "layer.yaml",
+        ])
+        .unwrap();
     }
 
     #[test]
@@ -902,7 +844,7 @@ mod tests {
             endpoint: "https://api.statespace.com".into(),
             token: None,
         };
-        let error = api.request(Method::GET, "/v1/projects").unwrap_err();
+        let error = api.request(Method::GET, "/v1/account").unwrap_err();
         assert_eq!(error.to_string(), "not logged in; run ssp login");
     }
 }
