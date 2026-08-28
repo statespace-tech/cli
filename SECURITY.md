@@ -14,4 +14,4 @@ We will confirm receipt, assess severity, and coordinate a fix and disclosure. W
 
 ## Sensitive data
 
-Treat account sessions, admin tokens, and project tokens as secrets. Database URLs identify projects, but a valid project token is required for access.
+Treat account sessions, admin tokens, and database tokens as secrets. A database URL identifies the account database, but a valid token is required for access.

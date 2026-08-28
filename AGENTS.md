@@ -1,6 +1,6 @@
 # Statespace agent instructions
 
-Statespace is a headless A/B testing platform. Use the `ssp` CLI to configure projects and experiments. Use a Statespace SDK to assign subjects and record outcomes at runtime. Query results directly with DuckDB.
+Statespace is a headless A/B testing platform. Use the `ssp` CLI to inspect the account and operate experiments. Use a Statespace SDK to create experiments, assign subjects, and record outcomes at runtime. Query results directly with DuckDB.
 
 ## Install the CLI
 
@@ -26,7 +26,7 @@ Use `--no-open` when the environment cannot open a browser.
 ssp login --no-open
 ```
 
-Show the authenticated account and its enforced plan limits.
+Show the authenticated account, enforced plan limits, usage, and DuckDB URL.
 
 ```bash
 ssp account
@@ -40,81 +40,45 @@ ssp logout
 
 The CLI stores the account session locally. Do not copy this account credential into application code.
 
-## Manage projects
+Each account has one database. Users do not create, list, select, or configure account databases.
 
-A project is the isolation boundary for experiments, tokens, and one queryable DuckDB database. Project names are globally unique.
+## Manage database tokens
 
-Create a project.
+Database tokens are capabilities that can be shared with applications, people, or agents.
 
-```bash
-ssp project create --name atlas-search
-```
-
-The command returns the database URL and one default read-write token. The token secret appears once.
-
-List the projects owned by the account.
-
-```bash
-ssp project list
-```
-
-Show one project, its active token metadata, and its experiments.
-
-```bash
-ssp project show --name atlas-search
-```
-
-Delete a project and all of its experiment data. This action is permanent.
-
-```bash
-ssp project delete --name atlas-search --yes
-```
-
-The CLI is stateless. Always identify a project with `--name` or `--project` as required by the command.
-
-## Manage project tokens
-
-Project tokens are capabilities that can be shared with applications, people, or agents.
-
-- A `read-only` token can query the project database.
+- A `read-only` token can query the account database.
 - A `read-write` token can query the database, assign subjects, and record outcomes.
 - Neither token can change experiment definitions or manage other tokens.
 
 Create a read-write token for an application.
 
 ```bash
-ssp project token create \
-  --project atlas-search \
-  --name production \
-  --access read-write
+ssp token create -n production --access read-write
 ```
 
 Create a read-only token for an analyst or coding agent.
 
 ```bash
-ssp project token create \
-  --project atlas-search \
-  --name analyst \
-  --access read-only
+ssp token create -n analyst --access read-only
 ```
 
 List active tokens. This command shows token IDs and prefixes, but it does not show token secrets.
 
 ```bash
-ssp project token list --project atlas-search
+ssp token list
 ```
 
 Revoke a shared token by ID.
 
 ```bash
-ssp project token revoke --project atlas-search --id tok_123
+ssp token revoke --id tok_123
 ```
 
 Store each token secret in a secret manager or environment variable. Do not put it in source control, command history, logs, or URLs. Create separate tokens for separate applications and recipients so that each token can be revoked independently.
 
-## Define experiments
+## Run experiments
 
-Put the complete experiment definition in a YAML file.
+Put the complete experiment definition in a YAML file for the runtime SDK.
 
 ```yaml
 name: rank-v2
@@ -127,49 +91,92 @@ groups:
       reranker: rrf
 ```
 
-The control group is added automatically when the file does not contain one. It receives the remaining weight and an empty configuration.
+The control group is added automatically when the definition does not contain one. It receives the remaining weight and an empty configuration.
 
-Create an experiment.
+Use the Python or TypeScript SDK to load the definition and pass it to `statespace.init(...)`. The SDK creates and starts an absent experiment at runtime.
 
-```bash
-ssp experiment create --project atlas-search --file experiment.yaml
-```
-
-Replace a draft definition atomically. A stopped experiment can change its description and group configuration, but not its assignment, group names, or weights.
+Inspect and control experiments created by an SDK.
 
 ```bash
-ssp experiment update --project atlas-search --file experiment.yaml
+ssp experiment list
+ssp experiment show -n rank-v2
+ssp experiment start -n rank-v2
+ssp experiment stop -n rank-v2
+ssp experiment delete -n rank-v2
 ```
 
-Inspect and control the experiment lifecycle.
+Do not create or edit experiment definitions through the CLI.
+
+## Control assignment
+
+Set initial traffic in the experiment file. Use stratified assignment when each completed block must contain the configured group proportions.
+
+```yaml
+name: checkout-v2
+description: Test a compact checkout flow.
+assignment:
+  unit: account_id
+  method: stratified
+  block_size: 10
+  strata:
+    - country
+traffic: 0.10
+layer: checkout
+groups:
+  - name: treatment
+    weight: 0.30
+    config:
+      checkout: compact
+```
+
+Each group weight multiplied by `block_size` must be a whole number. The runtime must provide every declared stratum when it requests an assignment.
+
+Increase traffic for a running experiment. Traffic cannot decrease after the experiment starts.
 
 ```bash
-ssp experiment list --project atlas-search
-ssp experiment show --project atlas-search --name rank-v2
-ssp experiment start --project atlas-search --name rank-v2
-ssp experiment stop --project atlas-search --name rank-v2
-ssp experiment delete --project atlas-search --name rank-v2
+ssp experiment traffic set \
+  -n checkout-v2 \
+  --traffic 0.25
 ```
 
-Stop an experiment before you change its configuration. Do not create or edit individual groups through separate commands.
+Create an exclusion layer before you create experiments that use it.
+
+```yaml
+name: checkout
+description: Keep checkout experiments mutually exclusive.
+assignment: account_id
+holdout: 0.05
+```
+
+Manage exclusion layers through the experiment command.
+
+```bash
+ssp experiment layer create --file layer.yaml
+ssp experiment layer list
+ssp experiment layer show -n checkout
+ssp experiment layer update --file layer.yaml
+ssp experiment layer delete -n checkout
+```
+
+The sum of running experiment traffic in a layer cannot exceed `1 - holdout`. An assignment value can enter only one experiment in the layer.
 
 ## Use an SDK at runtime
 
-Use a read-write project token in the runtime application.
+Use a read-write database token in the runtime application.
 
 ```bash
 export STATESPACE_TOKEN=ssp_rw_...
 ```
 
-For Python, use [`statespace-tech/python-sdk`](https://github.com/statespace-tech/python-sdk). Connect to an experiment, create a run for each exposure, read `run.config`, and record results with `run.outcome(...)`.
+For Python, use [`statespace-tech/python-sdk`](https://github.com/statespace-tech/python-sdk). Load or define an experiment, pass it to `statespace.init(...)`, assign subjects with `run.get_config(...)`, and record outcomes with `run.log(...)`.
 
 For TypeScript, use [`statespace-tech/ts-sdk`](https://github.com/statespace-tech/ts-sdk). Follow that repository for its runtime API.
 
-Do not define groups in application code. Read the assigned configuration from the SDK and provide an explicit default for each value.
+You can define groups in YAML or with the public `Experiment` and `Group` models. Read the assigned configuration from the SDK and provide an explicit default for each value.
 
 ## Query results
 
-Use DuckDB 2.0 or later directly through the standard Quack protocol. Use either a read-only or read-write project token.
+Use DuckDB 2.0 or later directly through the standard Quack protocol. Use either a read-only or read-write database token.
 
 ```sql
 ATTACH 'quack:atlas-search.db.statespace.app:443' AS statespace (
@@ -179,14 +186,13 @@ ATTACH 'quack:atlas-search.db.statespace.app:443' AS statespace (
 SELECT
   group_name,
   count(*) AS samples,
-  avg(value) AS mean_relevance
-FROM statespace.outcomes
+  avg(data.relevance::DOUBLE) AS mean_relevance
+FROM statespace.logs
 WHERE experiment_name = 'rank-v2'
-  AND name = 'relevance'
 GROUP BY group_name;
 ```
 
-The remote project database is read-only. A read-write token writes assignments and outcomes through the Statespace API, not through arbitrary SQL statements.
+The remote account database is read-only. A read-write token writes assignments and outcomes through the Statespace API, not through arbitrary SQL statements.
 
 ## Output and errors
 
@@ -196,7 +202,7 @@ Do not parse undocumented human-readable diagnostics. Depend only on documented 
 
 ## Repository maintenance
 
-Keep commands under `ssp project` and `ssp experiment`. Require an explicit project for project-scoped resources. Keep internal administration hidden from public help. Keep commands noninteractive unless the command explicitly requests an interactive mode. Never print a stored token secret.
+Keep commands under `ssp token` and `ssp experiment`. Keep `ssp account` as a read-only command with no subcommands. Keep internal administration hidden from public help. Keep commands noninteractive unless the command explicitly requests an interactive mode. Never print a stored token secret.
 
 Run these checks before a release:
 
