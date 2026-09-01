@@ -21,7 +21,7 @@
 
 ---
 
-**Website: [https://statespace.com](https://statespace.com/)**
+**Website:** [https://statespace.com](https://statespace.com/)
 
 **Documentation:** [https://docs.statespace.com](https://docs.statespace.com/)
 
@@ -35,12 +35,6 @@ Install the release binary on macOS or Linux.
 
 ```bash
 curl -fsSL https://statespace.com/install | bash
-```
-
-You can also install the CLI from crates.io.
-
-```bash
-cargo install statespace-cli --locked
 ```
 
 ## View the account
