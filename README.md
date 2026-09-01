@@ -2,9 +2,9 @@
 
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/header-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="./assets/header-light.png">
-    <img src="./assets/header-light.png" alt="Statespace" width="420">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/statespace-tech/cli/main/assets/header-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/statespace-tech/cli/main/assets/header-light.png">
+    <img src="https://raw.githubusercontent.com/statespace-tech/cli/main/assets/header-light.png" alt="Statespace" width="420">
   </picture>
 </div>
 
@@ -35,6 +35,12 @@ Install the release binary on macOS or Linux.
 
 ```bash
 curl -fsSL https://statespace.com/install | bash
+```
+
+You can also install the CLI from crates.io.
+
+```bash
+cargo install statespace-cli --locked
 ```
 
 ## View the account

@@ -6,6 +6,7 @@ rust-version = "1.85"
 license = "MIT"
 authors = ["Statespace Technologies, Inc."]
 homepage = "https://statespace.com"
+documentation = "https://docs.statespace.com"
 repository = "https://github.com/statespace-tech/cli"
 description = "CLI for A/B testing AI agents with Statespace"
 readme = "README.md"
