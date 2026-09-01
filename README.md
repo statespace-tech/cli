@@ -12,7 +12,10 @@
 
 <br>
 
+[![Test Suite](https://github.com/statespace-tech/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/statespace-tech/cli/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-007ec6?style=flat-square)](https://github.com/statespace-tech/cli/blob/main/LICENSE)
+[![crates.io](https://img.shields.io/crates/v/statespace-cli?style=flat-square)](https://crates.io/crates/statespace-cli)
+[![Discord](https://img.shields.io/discord/1323415085011701870?label=Discord&logo=discord&logoColor=white&color=5865F2&style=flat-square)](https://discord.gg/2jtfwu7xB)
 
 </div>
 
@@ -20,11 +23,11 @@
 
 **Website: [https://statespace.com](https://statespace.com/)**
 
-**Docs for agents:** [AGENTS.md](https://github.com/statespace-tech/cli/blob/main/AGENTS.md)
+**Documentation:** [https://docs.statespace.com](https://docs.statespace.com/)
 
 ---
 
-Statespace is a headless A/B testing platform for coding agents. Define product experiments and analyze their results with SQL.
+Statespace is an A/B testing platform for AI agents. Use your coding agent to define experiments and analyze outcomes with SQL.
 
 ## Install
 
