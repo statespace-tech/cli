@@ -1,106 +1,16 @@
-<svg
-  xmlns="http://www.w3.org/2000/svg"
-  width="800"
-  height="180"
-  viewBox="0 0 800 180"
-  role="img"
-  aria-labelledby="title"
->
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="280" viewBox="0 0 1000 280" role="img" aria-labelledby="title description">
   <title id="title">Statespace</title>
-  <g transform="translate(20 30) scale(.304)">
-    <g>
-      <rect
-        x="52.21"
-        y="276.57"
-        width="103.33"
-        height="103.33"
-        rx="10.74"
-        transform="translate(263.17 633.45) rotate(170)"
-        fill="#e3ff73"
-      />
-      <rect
-        x="32.53"
-        y="164.96"
-        width="103.33"
-        height="103.33"
-        rx="10.74"
-        transform="translate(204.73 415.34) rotate(170)"
-        fill="#6f881f"
-      />
-      <rect
-        x="163.82"
-        y="256.89"
-        width="103.33"
-        height="103.33"
-        rx="10.74"
-        transform="translate(481.28 575.01) rotate(170)"
-        fill="#6f881f"
-      />
-      <rect
-        x="275.43"
-        y="237.21"
-        width="103.33"
-        height="103.33"
-        rx="10.74"
-        transform="translate(699.39 516.57) rotate(170)"
-        fill="#8cae24"
-      />
-      <rect
-        x="255.75"
-        y="125.6"
-        width="103.33"
-        height="103.33"
-        rx="10.74"
-        transform="translate(640.95 298.46) rotate(170)"
-        fill="#4d5f18"
-      />
-      <rect
-        x="13.99"
-        y="53.35"
-        width="103.33"
-        height="103.33"
-        rx="10.74"
-        transform="translate(148.55 197.03) rotate(170)"
-        fill="#4d5f18"
-      />
-      <rect
-        x="124.46"
-        y="33.67"
-        width="103.33"
-        height="103.33"
-        rx="10.74"
-        transform="translate(364.4 138.79) rotate(170)"
-        fill="#8cae24"
-      />
-      <rect
-        x="236.07"
-        y="13.99"
-        width="103.33"
-        height="103.33"
-        rx="10.74"
-        transform="translate(582.51 80.35) rotate(170)"
-        fill="#efff91"
-      />
-      <rect
-        x="144.14"
-        y="145.28"
-        width="103.33"
-        height="103.33"
-        rx="10.74"
-        transform="translate(422.84 356.9) rotate(170)"
-        fill="#d8ff3e"
-      />
+  <desc id="description">Statespace horizontal banner for dark backgrounds.</desc>
+  <svg x="40" y="40" width="200" height="200" viewBox="0 0 30 30" aria-hidden="true">
+    <g fill="#8172eb">
+      <rect x="11" y="0" width="8" height="8" rx="0.5" />
+      <rect x="22" y="0" width="8" height="8" rx="0.5" />
+      <rect x="0" y="11" width="8" height="8" rx="0.5" />
+      <rect x="11" y="11" width="8" height="8" rx="0.5" />
+      <rect x="22" y="11" width="8" height="8" rx="0.5" />
+      <rect x="0" y="22" width="8" height="8" rx="0.5" />
+      <rect x="11" y="22" width="8" height="8" rx="0.5" />
     </g>
-  </g>
-  <text
-    x="180"
-    y="116"
-    fill="#efeee8"
-    font-family="Montserrat, Arial, sans-serif"
-    font-size="72"
-    font-weight="700"
-    letter-spacing="11"
-  >
-    STATESPACE
-  </text>
+  </svg>
+  <text x="310" y="166" fill="#fbfaff" font-family="Montserrat, Arial, sans-serif" font-size="72" font-weight="700" letter-spacing="8">STATESPACE</text>
 </svg>
