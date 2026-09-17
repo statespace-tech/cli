@@ -1,6 +1,7 @@
 name: rank-v2
 description: Test reciprocal rank fusion.
-assignment: subject_id
+assignment: user_id
+eligibility: 'context.country == "US"'
 groups:
   - name: treatment
     weight: 0.2
