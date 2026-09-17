@@ -34,4 +34,4 @@ Read the nearest `AGENTS.md` before you change the repository. Update documentat
 - Confirm that no credential, database capability URL, assignment context, or outcome data is present.
 - Add an entry to `CHANGELOG.md` for a user-visible change.
 
-By contributing, you agree that your contribution is licensed under the MIT License.
+By contributing, you agree that your contribution is licensed under the Apache License 2.0.
