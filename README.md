@@ -4,7 +4,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/statespace-tech/cli/main/assets/header-dark.png">
     <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/statespace-tech/cli/main/assets/header-light.png">
-    <img src="https://raw.githubusercontent.com/statespace-tech/cli/main/assets/header-light.png" alt="Statespace" width="420">
+    <img src="https://raw.githubusercontent.com/statespace-tech/cli/main/assets/header-light.png" alt="Statespace" width="520">
   </picture>
 </div>
 
@@ -13,7 +13,7 @@
 <br>
 
 [![Test Suite](https://github.com/statespace-tech/cli/actions/workflows/ci.yml/badge.svg)](https://github.com/statespace-tech/cli/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-MIT-007ec6?style=flat-square)](https://github.com/statespace-tech/cli/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-007ec6?style=flat-square)](https://github.com/statespace-tech/cli/blob/main/LICENSE)
 [![crates.io](https://img.shields.io/crates/v/statespace-cli?style=flat-square)](https://crates.io/crates/statespace-cli)
 [![Discord](https://img.shields.io/discord/1541944682727084143?label=Discord&logo=discord&logoColor=white&color=5865F2&style=flat-square)](https://discord.gg/qKEFpqG9mr)
 
@@ -27,56 +27,35 @@
 
 ---
 
-Statespace is an A/B testing platform for AI agents. Use your coding agent to define experiments and analyze outcomes with SQL.
+Statespace helps you A/B test any application.
 
-## Install
+## Installation
 
-Install the release binary on macOS or Linux.
+Install the Statespace CLI on macOS or Linux.
 
-```bash
+```shell
 curl -fsSL https://statespace.com/install | bash
 ```
 
-## View the account
+Install the SDK for the language used by the application you want to A/B test: [Python](https://github.com/statespace-tech/python-sdk), [TypeScript](https://github.com/statespace-tech/typescript-sdk), or [Go](https://github.com/statespace-tech/go-sdk).
 
-Show the signed-in account, plan limits, usage, and DuckDB URL.
+## Quickstart
 
-```bash
-ssp account
+Log in to your [Statespace account](https://statespace.com/), then create and export your API key:
+
+```shell
+ssp login
+ssp token create --name quickstart
+export STATESPACE_TOKEN=ssp_token_...
 ```
 
-Sign-up creates one account database. The CLI and API select it automatically.
-
-## Manage tokens
-
-Create separate tokens for applications and analysts. A read-write token can assign subjects and record logs, while a read-only token can only query the database.
-
-```bash
-ssp token create -n production --access read-write
-ssp token create -n analyst --access read-only
-```
-
-List token metadata without revealing token secrets, or revoke one token by ID.
-
-```bash
-ssp token list
-ssp token revoke --id tok_123
-```
-
-## Run an experiment
-
-Install the [Python SDK](https://github.com/statespace-tech/python-sdk). The SDK creates an absent experiment and rejects a conflicting definition with the same name.
-
-```bash
-uv add statespace-sdk
-```
-
-Define the treatment in application configuration. The SDK adds an empty control group with the remaining weight.
+Save an experiment config as `experiment.yaml`.
 
 ```yaml
-name: rank-v2
+name: new-ranking
 description: Test reciprocal rank fusion.
 assignment: user_id
+eligibility: 'context.country == "US"'
 groups:
   - name: treatment
     weight: 0.2
@@ -84,74 +63,90 @@ groups:
       reranker: rrf
 ```
 
-Run the experiment and record one arbitrary JSON document for each observation.
+Create and start it.
+
+```shell
+ssp experiment create --file experiment.yaml
+ssp experiment start --name new-ranking
+```
+
+Use the SDK for your application's language to assign subjects and record outcomes.
 
 ```python
 import statespace
 
-experiment = statespace.load("experiment.yaml")
-
-with statespace.init(**experiment) as run:
-    reranker = run.get_config("u_42").get("reranker", None)
+with statespace.init("new-ranking") as run:
+    config = run.get_config("u_42", context={"country": "US"})
+    reranker = config.get("reranker")
     run.log({"relevance": 0.7})
 ```
 
-## Operate experiments
+Query the outcomes directly from the CLI:
 
-Inspect experiments created by the SDK.
+```shell
+ssp query 'SELECT group_name, count(*) FROM statespace.logs GROUP BY group_name'
+```
 
-```bash
+# CLI reference
+
+## Experiments
+
+List experiments or inspect the latest version.
+
+```shell
 ssp experiment list
-ssp experiment show -n rank-v2
+ssp experiment show --name new-ranking
 ```
 
-Increase live traffic, stop collection, or delete an experiment.
+Edit `experiment.yaml`, then publish the next immutable draft version. Starting it stops new assignments to the prior version.
 
-```bash
-ssp experiment traffic set -n rank-v2 --traffic 0.5
-ssp experiment stop -n rank-v2
-ssp experiment start -n rank-v2
-ssp experiment delete -n rank-v2
+```shell
+ssp experiment publish --file experiment.yaml
+ssp experiment start --name new-ranking --version 2
 ```
 
-## Query results
+Stop or delete an experiment.
 
-Use DuckDB 2.0 or later directly through the [Quack protocol](https://duckdb.org/docs/current/quack/overview).
-
-```bash
-duckdb -c "ATTACH 'quack:acme.db.statespace.app:443' AS statespace (
-        TOKEN 'ssp_ro_7j...'
-      );
-      SELECT
-        group_name,
-        count(*) AS samples,
-        avg(data.relevance::DOUBLE) AS relevance
-      FROM statespace.logs
-      WHERE experiment_name = 'rank-v2'
-      GROUP BY group_name"
+```shell
+ssp experiment stop --name new-ranking
+ssp experiment delete --name new-ranking
 ```
 
-Use DuckDB statistical aggregates to estimate the treatment effect.
+## Tokens
 
-```bash
-duckdb -c "ATTACH 'quack:acme.db.statespace.app:443' AS statespace (
-        TOKEN 'ssp_ro_7j...'
-      );
-      WITH results AS (
-        SELECT
-          data.relevance::DOUBLE AS relevance,
-          CASE WHEN group_name = 'treatment' THEN 1.0 ELSE 0.0 END AS treatment
-        FROM statespace.logs
-        WHERE experiment_name = 'rank-v2'
-      )
-      SELECT
-        count(*) AS observations,
-        regr_intercept(relevance, treatment) AS control_relevance,
-        regr_slope(relevance, treatment) AS treatment_effect,
-        regr_r2(relevance, treatment) AS explained_variance
-      FROM results"
+Tokens authenticate SDKs and CI jobs through `STATESPACE_TOKEN`. Create a separate token for each deployment so you can revoke it independently.
+
+```shell
+ssp token create --name production
+ssp token list
+ssp token revoke --id tok_123
 ```
 
-## License
+## PostgreSQL
 
-MIT
+Each account has an isolated PostgreSQL database. `ssp query` runs one read-only `SELECT` statement and prints a JSON array.
+
+```shell
+ssp query 'SELECT * FROM statespace.logs ORDER BY run_timestamp DESC LIMIT 20'
+```
+
+Create a read-only credential for a person, agent, or BI tool. The PostgreSQL connection URL appears once.
+
+```shell
+ssp database credential create --name analyst
+ssp database credential list
+ssp database credential revoke --id dbc_123
+```
+
+## Account
+
+Show the authenticated account or remove the local session.
+
+```shell
+ssp account
+ssp logout
+```
+
+# License
+
+Apache-2.0
