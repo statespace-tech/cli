@@ -11,7 +11,7 @@ use wasmparser::{
     component_types::ComponentValType,
 };
 
-use crate::{ComponentLanguage, toolchain};
+use crate::{FunctionLanguage, toolchain};
 
 const WIT: &str = "package statespace:component;\nworld statespace {\n  export execute: func(input: string) -> string;\n}\n";
 const MAX_ARTIFACT_SIZE: usize = 64 * 1024 * 1024;
@@ -108,7 +108,7 @@ fn supported_wasi_import(name: &str) -> bool {
 
 pub fn build(
     source: &Path,
-    language: ComponentLanguage,
+    language: FunctionLanguage,
     entry: &str,
     output: &Path,
 ) -> anyhow::Result<()> {
@@ -122,13 +122,13 @@ pub fn build(
     let wit = temporary.path().join("statespace.wit");
     fs::write(&wit, WIT)?;
     match language {
-        ComponentLanguage::Python => build_python(&source, entry, &wit, &output)?,
-        ComponentLanguage::Typescript | ComponentLanguage::Javascript => {
+        FunctionLanguage::Python => build_python(&source, entry, &wit, &output)?,
+        FunctionLanguage::Typescript | FunctionLanguage::Javascript => {
             build_javascript(&source, entry, &wit, &output)?;
         }
-        ComponentLanguage::Go => build_go(&source, entry, &wit, &output)?,
-        ComponentLanguage::Rust => build_rust(&source, entry, &wit, &output)?,
-        ComponentLanguage::C | ComponentLanguage::Cpp => {
+        FunctionLanguage::Go => build_go(&source, entry, &wit, &output)?,
+        FunctionLanguage::Rust => build_rust(&source, entry, &wit, &output)?,
+        FunctionLanguage::C | FunctionLanguage::Cpp => {
             build_c_family(&source, entry, language, &wit, &output)?;
         }
     }
@@ -215,7 +215,7 @@ fn build_javascript(source: &Path, entry: &str, wit: &Path, output: &Path) -> an
 fn build_c_family(
     source: &Path,
     entry: &str,
-    language: ComponentLanguage,
+    language: FunctionLanguage,
     wit: &Path,
     output: &Path,
 ) -> anyhow::Result<()> {
@@ -225,7 +225,7 @@ fn build_c_family(
     {
         bail!("C and C++ entries must be function names");
     }
-    let is_cpp = matches!(language, ComponentLanguage::Cpp);
+    let is_cpp = matches!(language, FunctionLanguage::Cpp);
     let project = project_directory(source)?;
     let mut sources = Vec::new();
     if source.is_file() {

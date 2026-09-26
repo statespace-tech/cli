@@ -50,7 +50,7 @@ ssp token create --name quickstart
 export STATESPACE_TOKEN=ssp_token_...
 ```
 
-Save the trend-based component as `forecast.py`:
+Save the trend-based function as `forecast.py`:
 
 ```python
 from statistics import linear_regression
@@ -61,17 +61,18 @@ def predict(history: list[float]) -> float:
     return intercept + slope * len(history)
 ```
 
-Build and publish the component.
+Build and publish the function.
 
 ```shell
-ssp component build ./forecast.py --language python --entry forecast:predict --output forecast.wasm
-ssp component publish forecast.wasm --name forecast
+ssp function build ./forecast.py --language python --entry forecast:predict --output forecast.wasm
+ssp function publish forecast.wasm --name forecast
 ```
 
-Send half the traffic to the component.
+Send half the traffic to the function.
 
 ```shell
 ssp experiment create --name demand --variant forecast@latest=0.5
+ssp experiment start --name demand
 ```
 
 Save the Python app as `app.py`:
@@ -80,13 +81,15 @@ Save the Python app as `app.py`:
 from random import gauss
 from statistics import fmean
 
-from statespace import experiment
+import statespace
 
-test = experiment("demand")
+run = statespace.init("demand")
 for store in range(50):
     demand = [40 + day * 0.5 + gauss(0, 3) for day in range(15)]
-    run = test.assign(f"store-{store}")
-    run.log({"error": abs(run.execute(demand[:-1], default=fmean) - demand[-1])})
+    subject = f"store-{store}"
+    forecast = run.get_function(subject, default=fmean)(demand[:-1])
+    run.log(subject, {"error": abs(forecast - demand[-1])})
+run.close()
 ```
 
 Run the app.
@@ -118,6 +121,12 @@ Replace the full traffic split with `update`.
 ssp experiment update --name demand --variant forecast@latest=0.3
 ```
 
+Start the draft version when it is ready.
+
+```shell
+ssp experiment start --name demand
+```
+
 Stop or delete an experiment.
 
 ```shell
@@ -125,18 +134,18 @@ ssp experiment stop --name demand
 ssp experiment delete --name demand
 ```
 
-## Components
+## Functions
 
-Build a component from Python, JavaScript, TypeScript, Go, Rust, C, or C++.
+Build a function from Python, JavaScript, TypeScript, Go, Rust, C, or C++.
 
 ```shell
-ssp component build ./forecast.py --language python --entry forecast:predict --output forecast.wasm
+ssp function build ./forecast.py --language python --entry forecast:predict --output forecast.wasm
 ```
 
-Publish the component to use it in experiments.
+Publish the function to use it in experiments.
 
 ```shell
-ssp component publish forecast.wasm --name forecast
+ssp function publish forecast.wasm --name forecast
 ```
 
 ## Tokens

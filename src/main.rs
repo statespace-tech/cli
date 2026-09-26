@@ -46,8 +46,8 @@ enum Command {
     Database(DatabaseCommand),
     /// Manage experiments and immutable versions.
     Experiment(ExperimentCommand),
-    /// Build and publish executable components.
-    Component(ComponentCommand),
+    /// Build and publish executable functions.
+    Function(FunctionCommand),
     /// Run one read-only PostgreSQL query.
     Query {
         /// A SELECT statement.
@@ -122,7 +122,7 @@ struct ExperimentCommand {
 
 #[derive(Subcommand)]
 enum ExperimentSubcommand {
-    /// Create and start an experiment with a complete traffic split.
+    /// Create a draft experiment with a complete traffic split.
     Create {
         #[arg(long)]
         name: String,
@@ -165,13 +165,13 @@ enum ExperimentSubcommand {
 }
 
 #[derive(Args)]
-struct ComponentCommand {
+struct FunctionCommand {
     #[command(subcommand)]
-    command: ComponentSubcommand,
+    command: FunctionSubcommand,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
-enum ComponentLanguage {
+enum FunctionLanguage {
     Python,
     Typescript,
     Javascript,
@@ -182,18 +182,18 @@ enum ComponentLanguage {
 }
 
 #[derive(Subcommand)]
-enum ComponentSubcommand {
-    /// Build a local WebAssembly component from source.
+enum FunctionSubcommand {
+    /// Build a function as a local WebAssembly file.
     Build {
         source: PathBuf,
         #[arg(long)]
-        language: ComponentLanguage,
+        language: FunctionLanguage,
         #[arg(long)]
         entry: String,
         #[arg(long)]
         output: PathBuf,
     },
-    /// Validate and publish a built WebAssembly component.
+    /// Validate and publish a built function.
     Publish {
         artifact: PathBuf,
         #[arg(long)]
@@ -201,16 +201,16 @@ enum ComponentSubcommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// List published component versions.
+    /// List published function versions.
     List,
-    /// Show one published component version.
+    /// Show one published function version.
     Show {
         #[arg(long)]
         name: String,
         #[arg(long)]
         version: u32,
     },
-    /// Delete an unreferenced component version.
+    /// Delete an unreferenced function version.
     Delete {
         #[arg(long)]
         name: String,
@@ -280,19 +280,19 @@ struct ExperimentGroup {
 }
 
 #[derive(Debug, Serialize)]
-struct ComponentExperimentDefinition {
+struct FunctionExperimentDefinition {
     name: String,
-    variants: Vec<ComponentVariant>,
+    variants: Vec<FunctionVariant>,
 }
 
 #[derive(Debug, Serialize)]
-struct ComponentVariant {
-    component: String,
+struct FunctionVariant {
+    function: String,
     weight: f64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct ComponentView {
+struct FunctionView {
     name: String,
     version: u32,
     sha256: String,
@@ -417,7 +417,7 @@ async fn run() -> anyhow::Result<()> {
         Command::Token(command) => run_token(&api, command).await?,
         Command::Database(command) => run_database(&api, command).await?,
         Command::Experiment(command) => run_experiment(&api, command).await?,
-        Command::Component(command) => run_component(&api, command).await?,
+        Command::Function(command) => run_function(&api, command).await?,
         Command::Query { sql } => {
             let response = api
                 .send::<QueryResponse>(Method::POST, "/v1/query", Some(json!({ "sql": sql })))
@@ -472,19 +472,19 @@ async fn run_database(api: &Api, command: DatabaseCommand) -> anyhow::Result<()>
 async fn run_experiment(api: &Api, command: ExperimentCommand) -> anyhow::Result<()> {
     match command.command {
         ExperimentSubcommand::Create { name, variants } => {
-            let definition = component_experiment(&name, &variants)?;
+            let definition = function_experiment(&name, &variants)?;
             print_json(
                 &api.send::<ExperimentView>(
                     Method::POST,
-                    "/v1/component-experiments",
+                    "/v1/function-experiments",
                     Some(serde_json::to_value(definition)?),
                 )
                 .await?,
             )?;
         }
         ExperimentSubcommand::Update { name, variants } => {
-            let definition = component_experiment(&name, &variants)?;
-            let path = format!("/v1/component-experiments/{name}");
+            let definition = function_experiment(&name, &variants)?;
+            let path = format!("/v1/function-experiments/{name}");
             print_json(
                 &api.send::<ExperimentView>(
                     Method::PUT,
@@ -517,49 +517,49 @@ async fn run_experiment(api: &Api, command: ExperimentCommand) -> anyhow::Result
     Ok(())
 }
 
-fn component_experiment(
+fn function_experiment(
     name: &str,
     variants: &[String],
-) -> anyhow::Result<ComponentExperimentDefinition> {
+) -> anyhow::Result<FunctionExperimentDefinition> {
     if name.is_empty() || name.len() > 100 {
         bail!("experiment name must contain 1 to 100 characters");
     }
     let mut parsed = Vec::with_capacity(variants.len());
     let mut total = 0.0;
     for variant in variants {
-        let (component, weight) = variant
+        let (function, weight) = variant
             .rsplit_once('=')
-            .context("variant must use component@version=weight")?;
-        let (component_name, selector) = component
+            .context("variant must use function@version=weight")?;
+        let (function_name, selector) = function
             .rsplit_once('@')
-            .context("variant must use component@version=weight")?;
-        if component_name.is_empty()
+            .context("variant must use function@version=weight")?;
+        if function_name.is_empty()
             || !(selector == "latest" || selector.parse::<u32>().is_ok_and(|v| v > 0))
         {
-            bail!("variant must use a component name and @latest or a positive version");
+            bail!("variant must use a function name and @latest or a positive version");
         }
         let weight: f64 = weight.parse().context("invalid variant weight")?;
         if !weight.is_finite() || weight <= 0.0 || weight > 1.0 {
             bail!("variant weight must be greater than zero and at most one");
         }
         total += weight;
-        parsed.push(ComponentVariant {
-            component: component.into(),
+        parsed.push(FunctionVariant {
+            function: function.into(),
             weight,
         });
     }
     if total > 1.0 + 1e-12 {
         bail!("variant weights must total at most one");
     }
-    Ok(ComponentExperimentDefinition {
+    Ok(FunctionExperimentDefinition {
         name: name.into(),
         variants: parsed,
     })
 }
 
-async fn run_component(api: &Api, command: ComponentCommand) -> anyhow::Result<()> {
+async fn run_function(api: &Api, command: FunctionCommand) -> anyhow::Result<()> {
     match command.command {
-        ComponentSubcommand::Build {
+        FunctionSubcommand::Build {
             source,
             language,
             entry,
@@ -578,7 +578,7 @@ async fn run_component(api: &Api, command: ComponentCommand) -> anyhow::Result<(
                 "size": artifact.size,
             }))?;
         }
-        ComponentSubcommand::Publish {
+        FunctionSubcommand::Publish {
             artifact,
             name,
             dry_run,
@@ -593,28 +593,24 @@ async fn run_component(api: &Api, command: ComponentCommand) -> anyhow::Result<(
                     "status": "valid",
                 }))?;
             } else {
-                let path = format!("/v1/components/{name}");
+                let path = format!("/v1/functions/{name}");
                 print_json(
-                    &api.send_bytes::<ComponentView>(
-                        Method::POST,
-                        &path,
-                        std::fs::read(&artifact)?,
-                    )
-                    .await?,
+                    &api.send_bytes::<FunctionView>(Method::POST, &path, std::fs::read(&artifact)?)
+                        .await?,
                 )?;
             }
         }
-        ComponentSubcommand::List => {
-            print_json(&api.get::<Vec<ComponentView>>("/v1/components").await?)?;
+        FunctionSubcommand::List => {
+            print_json(&api.get::<Vec<FunctionView>>("/v1/functions").await?)?;
         }
-        ComponentSubcommand::Show { name, version } => {
+        FunctionSubcommand::Show { name, version } => {
             print_json(
-                &api.get::<ComponentView>(&format!("/v1/components/{name}/{version}"))
+                &api.get::<FunctionView>(&format!("/v1/functions/{name}/{version}"))
                     .await?,
             )?;
         }
-        ComponentSubcommand::Delete { name, version } => {
-            api.delete(&format!("/v1/components/{name}/{version}"))
+        FunctionSubcommand::Delete { name, version } => {
+            api.delete(&format!("/v1/functions/{name}/{version}"))
                 .await?;
             print_json(&json!({ "deleted": format!("{name}@{version}") }))?;
         }
@@ -835,7 +831,7 @@ mod tests {
         Cli::try_parse_from(["ssp", "experiment", "start", "--name", "rank-v2"]).unwrap();
         Cli::try_parse_from([
             "ssp",
-            "component",
+            "function",
             "build",
             "./ranker",
             "--language",
@@ -849,7 +845,7 @@ mod tests {
         for language in ["c", "cpp"] {
             Cli::try_parse_from([
                 "ssp",
-                "component",
+                "function",
                 "build",
                 "./ranker.c",
                 "--language",
@@ -863,7 +859,7 @@ mod tests {
         }
         Cli::try_parse_from([
             "ssp",
-            "component",
+            "function",
             "build",
             "./ranker",
             "--language",
@@ -874,18 +870,19 @@ mod tests {
             "ranker.wasm",
         ])
         .unwrap();
+        assert!(Cli::try_parse_from(["ssp", "component", "list"]).is_err());
         Cli::try_parse_from(["ssp", "query", "SELECT 1"]).unwrap();
     }
 
     #[test]
     fn validates_complete_traffic_snapshot() {
-        let definition = component_experiment(
+        let definition = function_experiment(
             "ranking",
             &["ranker@latest=0.2".into(), "other@2=0.1".into()],
         )
         .unwrap();
         assert_eq!(definition.variants.len(), 2);
-        assert!(component_experiment("ranking", &["ranker=0.2".into()]).is_err());
-        assert!(component_experiment("ranking", &["ranker@1=1.1".into()]).is_err());
+        assert!(function_experiment("ranking", &["ranker=0.2".into()]).is_err());
+        assert!(function_experiment("ranking", &["ranker@1=1.1".into()]).is_err());
     }
 }
