@@ -19,6 +19,8 @@
 
 </div>
 
+Statespace helps you A/B test application.
+
 ---
 
 **Website:** [https://statespace.com](https://statespace.com/)
@@ -27,7 +29,6 @@
 
 ---
 
-Statespace helps you A/B test any application.
 
 ## Installation
 
@@ -37,22 +38,28 @@ Install the Statespace CLI on macOS or Linux.
 curl -fsSL https://statespace.com/install | bash
 ```
 
-Install the SDK for the language used by the application you want to A/B test: [Python](https://github.com/statespace-tech/python-sdk), [TypeScript](https://github.com/statespace-tech/typescript-sdk), or [Go](https://github.com/statespace-tech/go-sdk).
-
-Install the Python SDK for the example below.
-
-```shell
-python -m pip install statespace-sdk
-```
-
 ## Quickstart
 
-Log in and create an API key.
+Log in.
 
 ```shell
 ssp login
-ssp token create --name quickstart
-export STATESPACE_TOKEN=ssp_token_...
+```
+
+Use the [Python](https://github.com/statespace-tech/python-sdk), [TypeScript](https://github.com/statespace-tech/typescript-sdk), or [Go](https://github.com/statespace-tech/go-sdk) SDK to apply an intervention; save this Python example as `app.py`.
+
+```python
+from random import gauss
+from statistics import fmean
+
+import statespace
+
+with statespace.init("demand") as run:
+    for store in range(50):
+        demand = [40 + day * 0.5 + gauss(0, 3) for day in range(15)]
+        subject = f"store-{store}"
+        forecast = run.get_function(subject, default=fmean)(demand[:-1])
+        run.log(subject, {"error": abs(forecast - demand[-1])})
 ```
 
 Save the trend-based function as `forecast.py`:
@@ -80,26 +87,11 @@ ssp experiment create --name demand --variant forecast@latest=0.5
 ssp experiment start --name demand
 ```
 
-Save the Python app as `app.py`:
-
-```python
-from random import gauss
-from statistics import fmean
-
-import statespace
-
-run = statespace.init("demand")
-for store in range(50):
-    demand = [40 + day * 0.5 + gauss(0, 3) for day in range(15)]
-    subject = f"store-{store}"
-    forecast = run.get_function(subject, default=fmean)(demand[:-1])
-    run.log(subject, {"error": abs(forecast - demand[-1])})
-run.close()
-```
-
-Run the app.
+Create an SDK token and run the app.
 
 ```shell
+ssp token create --name quickstart
+export STATESPACE_TOKEN=ssp_token_...
 python app.py
 ```
 
@@ -124,12 +116,6 @@ Replace the full traffic split with `update`.
 
 ```shell
 ssp experiment update --name demand --variant forecast@latest=0.3
-```
-
-Start the draft version when it is ready.
-
-```shell
-ssp experiment start --name demand
 ```
 
 Stop or delete an experiment.
