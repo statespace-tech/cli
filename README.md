@@ -39,12 +39,17 @@ curl -fsSL https://statespace.com/install | bash
 
 Install the SDK for the language used by the application you want to A/B test: [Python](https://github.com/statespace-tech/python-sdk), [TypeScript](https://github.com/statespace-tech/typescript-sdk), or [Go](https://github.com/statespace-tech/go-sdk).
 
-## Quickstart
-
-Install the Python SDK and create an API key:
+Install the Python SDK for the example below.
 
 ```shell
-python -m pip install git+https://github.com/statespace-tech/python-sdk.git@feat/components
+python -m pip install statespace-sdk
+```
+
+## Quickstart
+
+Log in and create an API key.
+
+```shell
 ssp login
 ssp token create --name quickstart
 export STATESPACE_TOKEN=ssp_token_...
