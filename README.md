@@ -76,7 +76,7 @@ run.log({"relevance": 0.7})
 Compare average relevance by group:
 
 ```shell
-ssp query "SELECT group_name, avg((data->>'relevance')::double precision) AS average_relevance FROM statespace.logs WHERE experiment_name = 'new-ranking' GROUP BY group_name"
+ssp query "SELECT group_name, avg((data->>'relevance')::float) FROM statespace.logs GROUP BY 1"
 ```
 
 # CLI reference
