@@ -38,7 +38,10 @@ pub fn inspect(path: &Path) -> anyhow::Result<Artifact> {
             Payload::End(_) => depth = depth.saturating_sub(1),
             Payload::ComponentImportSection(section) if depth == 0 => {
                 for import in section {
-                    bail!("component imports host capability: {}", import?.name.name);
+                    let name = import?.name.name;
+                    if !supported_wasi_import(name) {
+                        bail!("component imports unsupported host capability: {name}");
+                    }
                 }
             }
             Payload::ComponentExportSection(section) if depth == 0 => {
@@ -76,6 +79,33 @@ pub fn inspect(path: &Path) -> anyhow::Result<Artifact> {
     })
 }
 
+fn supported_wasi_import(name: &str) -> bool {
+    let Some(interface) = name.strip_suffix("@0.2.12") else {
+        return false;
+    };
+    matches!(
+        interface,
+        "wasi:cli/environment"
+            | "wasi:cli/exit"
+            | "wasi:cli/stdin"
+            | "wasi:cli/stdout"
+            | "wasi:cli/stderr"
+            | "wasi:cli/terminal-input"
+            | "wasi:cli/terminal-output"
+            | "wasi:cli/terminal-stdin"
+            | "wasi:cli/terminal-stdout"
+            | "wasi:cli/terminal-stderr"
+            | "wasi:io/error"
+            | "wasi:io/poll"
+            | "wasi:io/streams"
+            | "wasi:clocks/monotonic-clock"
+            | "wasi:clocks/wall-clock"
+            | "wasi:random/random"
+            | "wasi:filesystem/types"
+            | "wasi:filesystem/preopens"
+    )
+}
+
 pub fn build(
     source: &Path,
     language: ComponentLanguage,
@@ -96,9 +126,7 @@ pub fn build(
         ComponentLanguage::Typescript | ComponentLanguage::Javascript => {
             build_javascript(&source, entry, &wit, &output)?;
         }
-        ComponentLanguage::Go => bail!(
-            "Go component builds need WASI host imports, which this component format does not allow"
-        ),
+        ComponentLanguage::Go => build_go(&source, entry, &wit, &output)?,
         ComponentLanguage::Rust => build_rust(&source, entry, &wit, &output)?,
         ComponentLanguage::C | ComponentLanguage::Cpp => {
             build_c_family(&source, entry, language, &wit, &output)?;
@@ -277,6 +305,105 @@ fn wasi_compiler(cpp: bool) -> PathBuf {
         Some(path) => PathBuf::from(path).join("bin").join(binary),
         None => PathBuf::from(binary),
     }
+}
+
+fn build_go(source: &Path, entry: &str, wit: &Path, output: &Path) -> anyhow::Result<()> {
+    if !source.is_dir() || !source.join("go.mod").is_file() {
+        bail!("Go source must be a directory with go.mod");
+    }
+    let (package, function) = split_entry(entry)?;
+    if !function.as_bytes()[0].is_ascii_uppercase()
+        || package.starts_with('/')
+        || (package != "."
+            && package
+                .split('/')
+                .any(|part| part.is_empty() || part == "." || part == ".."))
+    {
+        bail!("Go entry must use relative-package:ExportedFunction");
+    }
+    let module_output = Command::new("go")
+        .current_dir(source)
+        .args(["list", "-m"])
+        .output()
+        .context("could not run go list -m")?;
+    if !module_output.status.success() {
+        bail!(
+            "go list -m failed: {}",
+            String::from_utf8_lossy(&module_output.stderr).trim()
+        );
+    }
+    let module = std::str::from_utf8(&module_output.stdout)?.trim();
+    if module.is_empty() {
+        bail!("Go module path is empty");
+    }
+    let import_path = if package == "." {
+        module.to_string()
+    } else {
+        format!("{module}/{}", package.trim_start_matches("./"))
+    };
+    let temporary = tempfile::tempdir()?;
+    run_command(
+        Command::new("componentize-go")
+            .current_dir(source)
+            .arg("-d")
+            .arg(wit)
+            .args(["-w", "statespace", "bindings", "--generate-stubs", "-o"])
+            .arg(temporary.path()),
+        "componentize-go bindings",
+    )?;
+    let go_mod = temporary.path().join("go.mod");
+    let mut manifest = fs::read_to_string(&go_mod)?;
+    manifest.push_str(&format!(
+        "\nrequire {module} v0.0.0\nreplace {module} => {:?}\n",
+        source.to_string_lossy()
+    ));
+    fs::write(go_mod, manifest)?;
+    let code = format!(
+        r#"package export_wit_world
+
+import (
+    "encoding/json"
+    "reflect"
+    user {import_path:?}
+)
+
+func Execute(input string) string {{
+    function := reflect.ValueOf(user.{function})
+    signature := function.Type()
+    errorType := reflect.TypeOf((*error)(nil)).Elem()
+    if signature.NumIn() != 1 || signature.NumOut() < 1 || signature.NumOut() > 2 ||
+        (signature.NumOut() == 2 && signature.Out(1) != errorType) {{
+        panic("component entry must accept one JSON value and return a value or (value, error)")
+    }}
+    argument := reflect.New(signature.In(0))
+    if err := json.Unmarshal([]byte(input), argument.Interface()); err != nil {{ panic(err) }}
+    results := function.Call([]reflect.Value{{argument.Elem()}})
+    if len(results) == 2 && !results[1].IsNil() {{ panic(results[1].Interface()) }}
+    output, err := json.Marshal(results[0].Interface())
+    if err != nil {{ panic(err) }}
+    return string(output)
+}}
+"#
+    );
+    fs::write(
+        temporary.path().join("export_wit_world/wit_bindings.go"),
+        code,
+    )?;
+    run_command(
+        Command::new("go")
+            .current_dir(temporary.path())
+            .args(["mod", "tidy"]),
+        "go mod tidy",
+    )?;
+    run_command(
+        Command::new("componentize-go")
+            .current_dir(temporary.path())
+            .arg("-d")
+            .arg(wit)
+            .args(["-w", "statespace", "build", "-o"])
+            .arg(output),
+        "componentize-go build",
+    )
 }
 
 fn build_rust(source: &Path, entry: &str, wit: &Path, output: &Path) -> anyhow::Result<()> {

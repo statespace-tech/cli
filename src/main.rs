@@ -855,6 +855,19 @@ mod tests {
             ])
             .unwrap();
         }
+        Cli::try_parse_from([
+            "ssp",
+            "component",
+            "build",
+            "./ranker",
+            "--language",
+            "go",
+            "--entry",
+            ".:Score",
+            "--output",
+            "ranker.wasm",
+        ])
+        .unwrap();
         Cli::try_parse_from(["ssp", "query", "SELECT 1"]).unwrap();
     }
 
