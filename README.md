@@ -49,16 +49,18 @@ ssp token create --name quickstart
 export STATESPACE_TOKEN=ssp_token_...
 ```
 
-Build a component from a function in your project. The function receives one JSON value and returns a JSON value.
+Build and publish the component.
 
 ```shell
 ssp component build ./ranker --language python --entry ranker:score --output ranker.wasm
-ssp component publish ranker.wasm --name ranker --dry-run
 ssp component publish ranker.wasm --name ranker
-ssp experiment create --name new-ranking --variant ranker@1=0.2
 ```
 
-The remaining 80% uses your application default. Create starts the experiment.
+Create the experiment.
+
+```shell
+ssp experiment create --name new-ranking --variant ranker@1=0.2
+```
 
 Use the SDK to assign a subject, execute its component, and record an outcome.
 
