@@ -73,10 +73,10 @@ result = run.execute({"scores": [0.2, 0.9]}, default=lambda inputs: inputs)
 run.log({"relevance": 0.7})
 ```
 
-Query the outcomes directly from the CLI:
+Compare average relevance by group:
 
 ```shell
-ssp query 'SELECT group_name, count(*) FROM statespace.runs GROUP BY group_name'
+ssp query "SELECT group_name, avg((data->>'relevance')::double precision) AS average_relevance FROM statespace.logs WHERE experiment_name = 'new-ranking' GROUP BY group_name"
 ```
 
 # CLI reference
