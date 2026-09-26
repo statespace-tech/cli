@@ -49,42 +49,32 @@ ssp token create --name quickstart
 export STATESPACE_TOKEN=ssp_token_...
 ```
 
-Save an experiment config as `experiment.yaml`.
-
-```yaml
-name: new-ranking
-description: Test reciprocal rank fusion.
-assignment: user_id
-eligibility: 'context.country == "US"'
-groups:
-  - name: treatment
-    weight: 0.2
-    config:
-      reranker: rrf
-```
-
-Create and start it.
+Build a component from a function in your project. The function receives one JSON value and returns a JSON value.
 
 ```shell
-ssp experiment create --file experiment.yaml
-ssp experiment start --name new-ranking
+ssp component build ./ranker --language python --entry ranker:score --output ranker.wasm
+ssp component publish ranker.wasm --name ranker --dry-run
+ssp component publish ranker.wasm --name ranker
+ssp experiment create --name new-ranking --variant ranker@1=0.2
 ```
 
-Use the SDK for your application's language to assign subjects and record outcomes.
+The remaining 80% uses your application default. Create starts the experiment.
+
+Use the SDK to assign a subject, execute its component, and record an outcome.
 
 ```python
-import statespace
+from statespace import Client
 
-with statespace.init("new-ranking") as run:
-    config = run.get_config("u_42", context={"country": "US"})
-    reranker = config.get("reranker")
-    run.log({"relevance": 0.7})
+client = Client()
+run = client.experiment("new-ranking").assign("u_42")
+result = run.execute({"scores": [0.2, 0.9]}, default=lambda inputs: inputs)
+run.log({"relevance": 0.7})
 ```
 
 Query the outcomes directly from the CLI:
 
 ```shell
-ssp query 'SELECT group_name, count(*) FROM statespace.logs GROUP BY group_name'
+ssp query 'SELECT group_name, count(*) FROM statespace.runs GROUP BY group_name'
 ```
 
 # CLI reference
@@ -98,11 +88,10 @@ ssp experiment list
 ssp experiment show --name new-ranking
 ```
 
-Edit `experiment.yaml`, then publish the next immutable draft version. Starting it stops new assignments to the prior version.
+Replace the full traffic split with `update`. Each update creates an immutable internal version. A running experiment stays running. A stopped experiment stays stopped.
 
 ```shell
-ssp experiment publish --file experiment.yaml
-ssp experiment start --name new-ranking --version 2
+ssp experiment update --name new-ranking --variant ranker@latest=0.3
 ```
 
 Stop or delete an experiment.
@@ -111,6 +100,29 @@ Stop or delete an experiment.
 ssp experiment stop --name new-ranking
 ssp experiment delete --name new-ranking
 ```
+
+## Components
+
+`build` creates a local Wasm file. It does not contact Statespace. `publish` validates and uploads that file. Published versions are immutable. Publishing the same bytes under the same name returns the existing version.
+
+```shell
+ssp component build ./ranker --language python --entry ranker:score --output ranker.wasm
+ssp component build ./ranker --language javascript --entry ranker.js:score --output ranker.wasm
+ssp component build ./ranker --language typescript --entry ranker.ts:score --output ranker.wasm
+ssp component build ./ranker --language rust --entry score --output ranker.wasm
+ssp component build ./ranker.c --language c --entry score --output ranker.wasm
+ssp component build ./ranker.cpp --language cpp --entry score --output ranker.wasm
+ssp component publish ranker.wasm --name ranker --dry-run
+ssp component publish ranker.wasm --name ranker
+ssp component list
+ssp component show --name ranker --version 1
+```
+
+Install the matching local build tool: `componentize-py` for Python, `jco` for JavaScript and TypeScript, `cargo` and `wasm-tools` for Rust, or `wit-bindgen` and WASI SDK for C and C++. Rust builds require the `wasm32-unknown-unknown` target. Set `WASI_SDK_PATH` to the WASI SDK directory, or put `wasm32-wasip2-clang` and `wasm32-wasip2-clang++` on `PATH`. The CLI rejects components that import host capabilities.
+
+C and C++ entries have the signature `char *score(const char *input)`. The input is JSON text. The return value must be JSON text in a buffer allocated with `malloc`; Statespace copies and frees that buffer. C++ source can use C++ code internally, but the entry uses this C-style signature. Some C++ libraries require WASI host capabilities and cannot be packaged under the current import-free rule. Go authoring also needs WASI host capabilities and is deferred under that rule. The Go SDK can execute components built in the supported languages.
+
+For local experiments, use `Client.local().component_experiment("new-ranking", {"./ranker.wasm": 1.0})` in Python. The SDK uses the file stem as the variant name and keeps events in memory.
 
 ## Tokens
 
@@ -127,7 +139,7 @@ ssp token revoke --id tok_123
 Each account has an isolated PostgreSQL database. `ssp query` runs one read-only `SELECT` statement and prints a JSON array.
 
 ```shell
-ssp query 'SELECT * FROM statespace.logs ORDER BY run_timestamp DESC LIMIT 20'
+ssp query 'SELECT * FROM statespace.runs ORDER BY timestamp DESC LIMIT 20'
 ```
 
 Create a read-only credential for a person, agent, or BI tool. The PostgreSQL connection URL appears once.
