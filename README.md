@@ -58,11 +58,11 @@ import statespace
 
 with statespace.init("demand") as run:
     for store in range(50):
-        demand = [40 + day * 0.5 + gauss(0, 3) for day in range(15)]
+        *x, y = [40 + day * 0.5 + gauss(0, 3) for day in range(15)]
         subject = f"store-{store}"
-        predict = run.get_function(subject, default=fmean)
-        predicted = predict(demand[:-1])
-        run.log(subject, {"error": abs(predicted - demand[-1])})
+        fn = run.get_function(subject, default=fmean)
+        pred = fn(x)
+        run.log(subject, {"error": abs(pred - y)})
 ```
 
 `get_function` assigns each store a forecast. Control stores use the app's `fmean` default; treatment stores use the candidate function defined below.
