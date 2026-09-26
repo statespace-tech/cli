@@ -11,7 +11,7 @@ use wasmparser::{
     component_types::ComponentValType,
 };
 
-use crate::ComponentLanguage;
+use crate::{ComponentLanguage, toolchain};
 
 const WIT: &str = "package statespace:component;\nworld statespace {\n  export execute: func(input: string) -> string;\n}\n";
 const MAX_ARTIFACT_SIZE: usize = 64 * 1024 * 1024;
@@ -158,8 +158,12 @@ fn build_python(source: &Path, entry: &str, wit: &Path, output: &Path) -> anyhow
         "import importlib\nimport json\nimport wit_world\n\n_user = getattr(importlib.import_module({module:?}), {symbol:?})\n\nclass WitWorld(wit_world.WitWorld):\n    def execute(self, input: str) -> str:\n        return json.dumps(_user(json.loads(input)))\n"
     );
     fs::write(wrapper.path(), code)?;
+    let mut command = toolchain::python_command()?;
+    if std::env::var_os("VIRTUAL_ENV").is_none() && project.join(".venv").is_dir() {
+        command.env("VIRTUAL_ENV", project.join(".venv"));
+    }
     run_command(
-        Command::new("componentize-py")
+        command
             .current_dir(&project)
             .args(["-d"])
             .arg(wit)
@@ -194,7 +198,7 @@ fn build_javascript(source: &Path, entry: &str, wit: &Path, output: &Path) -> an
     );
     fs::write(wrapper.path(), code)?;
     run_command(
-        Command::new("jco")
+        toolchain::javascript_command()?
             .current_dir(&project)
             .arg("componentize")
             .arg(wrapper.path())
@@ -240,7 +244,7 @@ fn build_c_family(
     }
     let temporary = tempfile::tempdir()?;
     run_command(
-        Command::new("wit-bindgen")
+        Command::new(toolchain::binary("wit-bindgen", "0.62.0")?)
             .arg("c")
             .arg(wit)
             .args(["--world", "statespace", "--out-dir"])
@@ -255,8 +259,8 @@ fn build_c_family(
         "#include \"statespace.h\"\n#include <stdlib.h>\n#include <string.h>\n\nchar *{entry}(const char *input);\n\n{exported} exports_statespace_execute(statespace_string_t *input, statespace_string_t *ret) {{\n    if (input->len == SIZE_MAX) __builtin_trap();\n    char *text = (char *)malloc(input->len + 1);\n    if (text == NULL) __builtin_trap();\n    memcpy(text, input->ptr, input->len);\n    text[input->len] = '\\0';\n    char *result = {entry}(text);\n    free(text);\n    if (result == NULL) __builtin_trap();\n    statespace_string_dup(ret, result);\n    free(result);\n}}\n"
     );
     fs::write(&wrapper, code)?;
-    let c_compiler = wasi_compiler(false);
-    let cpp_compiler = wasi_compiler(true);
+    let c_compiler = wasi_compiler(false)?;
+    let cpp_compiler = wasi_compiler(true)?;
     let generated_object = temporary.path().join("statespace.o");
     run_command(
         Command::new(&c_compiler)
@@ -295,16 +299,18 @@ fn c_family_extension(path: &Path, is_cpp: bool) -> bool {
     }
 }
 
-fn wasi_compiler(cpp: bool) -> PathBuf {
+fn wasi_compiler(cpp: bool) -> anyhow::Result<PathBuf> {
     let binary = if cpp {
         "wasm32-wasip2-clang++"
     } else {
         "wasm32-wasip2-clang"
     };
-    match std::env::var_os("WASI_SDK_PATH") {
-        Some(path) => PathBuf::from(path).join("bin").join(binary),
-        None => PathBuf::from(binary),
-    }
+    let binary = if cfg!(windows) {
+        format!("{binary}.exe")
+    } else {
+        binary.to_string()
+    };
+    Ok(toolchain::wasi_sdk()?.join("bin").join(binary))
 }
 
 fn build_go(source: &Path, entry: &str, wit: &Path, output: &Path) -> anyhow::Result<()> {
@@ -343,7 +349,7 @@ fn build_go(source: &Path, entry: &str, wit: &Path, output: &Path) -> anyhow::Re
     };
     let temporary = tempfile::tempdir()?;
     run_command(
-        Command::new("componentize-go")
+        Command::new(toolchain::binary("componentize-go", "0.4.3")?)
             .current_dir(source)
             .arg("-d")
             .arg(wit)
@@ -396,7 +402,7 @@ func Execute(input string) string {{
         "go mod tidy",
     )?;
     run_command(
-        Command::new("componentize-go")
+        Command::new(toolchain::binary("componentize-go", "0.4.3")?)
             .current_dir(temporary.path())
             .arg("-d")
             .arg(wit)
@@ -442,6 +448,7 @@ fn build_rust(source: &Path, entry: &str, wit: &Path, output: &Path) -> anyhow::
             "wit_bindgen::generate!({{ path: \"wit\", world: \"statespace\" }});\n\nstruct Component;\n\nimpl Guest for Component {{\n    fn execute(input: String) -> String {{\n        let value = serde_json::from_str(&input).expect(\"valid JSON input\");\n        let result = user_component::{entry}(value);\n        serde_json::to_string(&result).expect(\"serializable output\")\n    }}\n}}\n\nexport!(Component);\n"
         ),
     )?;
+    toolchain::ensure_rust_target()?;
     run_command(
         Command::new("cargo").current_dir(temporary.path()).args([
             "build",
@@ -452,7 +459,7 @@ fn build_rust(source: &Path, entry: &str, wit: &Path, output: &Path) -> anyhow::
         "cargo build for wasm32-unknown-unknown",
     )?;
     run_command(
-        Command::new("wasm-tools")
+        Command::new(toolchain::binary("wasm-tools", "1.259.0")?)
             .current_dir(temporary.path())
             .args(["component", "new"])
             .arg(
@@ -502,7 +509,7 @@ fn absolute(path: &Path) -> anyhow::Result<PathBuf> {
 fn run_command(command: &mut Command, name: &str) -> anyhow::Result<()> {
     let output = command
         .output()
-        .with_context(|| format!("could not run {name}; install it on your machine"))?;
+        .with_context(|| format!("could not run {name}"))?;
     if !output.status.success() {
         bail!(
             "{name} failed: {}",

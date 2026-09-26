@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod component;
+mod toolchain;
 
 #[derive(Parser)]
 #[command(name = "ssp", version, about = "Manage Statespace experiments")]
@@ -564,7 +565,12 @@ async fn run_component(api: &Api, command: ComponentCommand) -> anyhow::Result<(
             entry,
             output,
         } => {
-            component::build(&source, language, &entry, &output)?;
+            let build_source = source.clone();
+            let build_output = output.clone();
+            tokio::task::spawn_blocking(move || {
+                component::build(&build_source, language, &entry, &build_output)
+            })
+            .await??;
             let artifact = component::inspect(&output)?;
             print_json(&json!({
                 "artifact": output,

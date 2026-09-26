@@ -88,7 +88,7 @@ ssp experiment list
 ssp experiment show --name new-ranking
 ```
 
-Replace the full traffic split with `update`. Each update creates an immutable internal version. A running experiment stays running. A stopped experiment stays stopped.
+Replace the full traffic split with `update`.
 
 ```shell
 ssp experiment update --name new-ranking --variant ranker@latest=0.3
@@ -103,31 +103,17 @@ ssp experiment delete --name new-ranking
 
 ## Components
 
-The CLI builds components from Python, JavaScript, TypeScript, Go, Rust, C, and C++ source. The Python, TypeScript, and Go SDKs can each run the resulting artifacts.
-
-`build` creates a local Wasm file. It does not contact Statespace. `publish` validates and uploads that file. Published versions are immutable. Publishing the same bytes under the same name returns the existing version.
+Build a component from Python, JavaScript, TypeScript, Go, Rust, C, or C++.
 
 ```shell
 ssp component build ./ranker --language python --entry ranker:score --output ranker.wasm
-ssp component build ./ranker --language javascript --entry ranker.js:score --output ranker.wasm
-ssp component build ./ranker --language typescript --entry ranker.ts:score --output ranker.wasm
-ssp component build ./ranker --language rust --entry score --output ranker.wasm
-ssp component build ./ranker --language go --entry .:Score --output ranker.wasm
-ssp component build ./ranker.c --language c --entry score --output ranker.wasm
-ssp component build ./ranker.cpp --language cpp --entry score --output ranker.wasm
-ssp component publish ranker.wasm --name ranker --dry-run
-ssp component publish ranker.wasm --name ranker
-ssp component list
-ssp component show --name ranker --version 1
 ```
 
-Install the matching local build tool: `componentize-py` for Python, `jco` for JavaScript and TypeScript, `cargo` and `wasm-tools` for Rust, `componentize-go` for Go, or `wit-bindgen` and WASI SDK for C and C++. Rust builds require the `wasm32-unknown-unknown` target. Set `WASI_SDK_PATH` to the WASI SDK directory, or put `wasm32-wasip2-clang` and `wasm32-wasip2-clang++` on `PATH`. The CLI accepts import-free components and a restricted WASI Preview 2 profile. It rejects network and HTTP imports.
+Publish the component to use it in experiments.
 
-C and C++ entries have the signature `char *score(const char *input)`. The input is JSON text. The return value must be JSON text in a buffer allocated with `malloc`; Statespace copies and frees that buffer. C++ source can use C++ code internally, but the entry uses this C-style signature. Go entries use `package:ExportedFunction`, such as `.:Score`; the function accepts one JSON-decodable value and returns a JSON-encodable value or `(value, error)`.
-
-The same artifact runs in the Python, TypeScript, and Go SDKs. The supported WASI profile provides clocks, random data, standard streams, and empty environment and filesystem preopens. It does not provide network or HTTP access. The CLI and backend accept only the listed WASI Preview 2 interfaces at version `0.2.12`.
-
-For local experiments, use `Client.local().component_experiment("new-ranking", {"./ranker.wasm": 1.0})` in Python. The SDK uses the file stem as the variant name and keeps events in memory.
+```shell
+ssp component publish ranker.wasm --name ranker
+```
 
 ## Tokens
 
