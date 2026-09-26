@@ -41,42 +41,75 @@ Install the SDK for the language used by the application you want to A/B test: [
 
 ## Quickstart
 
-Log in to your [Statespace account](https://statespace.com/), then create and export your API key:
+Install the Python SDK, then create an API key:
 
 ```shell
+python -m pip install git+https://github.com/statespace-tech/python-sdk.git@feat/components
 ssp login
 ssp token create --name quickstart
 export STATESPACE_TOKEN=ssp_token_...
 ```
 
-Build and publish the component.
-
-```shell
-ssp component build ./ranker --language python --entry ranker:score --output ranker.wasm
-ssp component publish ranker.wasm --name ranker
-```
-
-Create the experiment.
-
-```shell
-ssp experiment create --name new-ranking --variant ranker@1=0.2
-```
-
-Use the SDK to assign a subject, execute its component, and record an outcome.
+Save the candidate as `forecast.py`:
 
 ```python
-from statespace import Client
+from statistics import linear_regression
 
-client = Client()
-run = client.experiment("new-ranking").assign("u_42")
-result = run.execute({"scores": [0.2, 0.9]}, default=lambda inputs: inputs)
-run.log({"relevance": 0.7})
+
+def predict(history):
+    """Fit a trend and predict the next day's demand."""
+    slope, intercept = linear_regression(range(len(history)), history)
+    return intercept + slope * len(history)
 ```
 
-Compare average relevance by group:
+Build and publish the candidate.
 
 ```shell
-ssp query "SELECT group_name, avg((data->>'relevance')::float) FROM statespace.logs GROUP BY 1"
+ssp component build ./forecast.py --language python --entry forecast:predict --output forecast.wasm
+ssp component publish forecast.wasm --name forecast
+```
+
+Send half the traffic to the component.
+
+```shell
+ssp experiment create --name demand --variant forecast@latest=0.5
+```
+
+Save `app.py` to generate demand histories and measure each next-day error:
+
+```python
+from random import Random
+from statistics import fmean
+
+from statespace import Client
+
+rng = Random(42)
+client = Client()
+try:
+    experiment = client.experiment("demand")
+    for store in range(50):
+        base = rng.uniform(30, 60)
+        trend = rng.uniform(-1, 1)
+        history = [base + trend * day + rng.gauss(0, 3) for day in range(14)]
+        actual = base + trend * 14 + rng.gauss(0, 3)
+
+        run = experiment.assign(f"store-{store}")
+        forecast = run.execute(history, default=fmean)
+        run.log({"error": abs(forecast - actual)})
+finally:
+    client.close()
+```
+
+Run the app.
+
+```shell
+python app.py
+```
+
+Compare average forecast error by group.
+
+```shell
+ssp query "SELECT group_name,avg((data->>'error')::float) FROM statespace.logs WHERE experiment_name='demand' GROUP BY 1"
 ```
 
 # CLI reference
@@ -87,20 +120,20 @@ List experiments or inspect the latest version.
 
 ```shell
 ssp experiment list
-ssp experiment show --name new-ranking
+ssp experiment show --name demand
 ```
 
 Replace the full traffic split with `update`.
 
 ```shell
-ssp experiment update --name new-ranking --variant ranker@latest=0.3
+ssp experiment update --name demand --variant forecast@latest=0.3
 ```
 
 Stop or delete an experiment.
 
 ```shell
-ssp experiment stop --name new-ranking
-ssp experiment delete --name new-ranking
+ssp experiment stop --name demand
+ssp experiment delete --name demand
 ```
 
 ## Components
@@ -108,13 +141,13 @@ ssp experiment delete --name new-ranking
 Build a component from Python, JavaScript, TypeScript, Go, Rust, C, or C++.
 
 ```shell
-ssp component build ./ranker --language python --entry ranker:score --output ranker.wasm
+ssp component build ./forecast.py --language python --entry forecast:predict --output forecast.wasm
 ```
 
 Publish the component to use it in experiments.
 
 ```shell
-ssp component publish ranker.wasm --name ranker
+ssp component publish forecast.wasm --name forecast
 ```
 
 ## Tokens
