@@ -46,7 +46,9 @@ Log in.
 ssp login
 ```
 
-Use the [Python](https://github.com/statespace-tech/python-sdk), [TypeScript](https://github.com/statespace-tech/typescript-sdk), or [Go](https://github.com/statespace-tech/go-sdk) SDK to apply an intervention; save this Python example as `app.py`.
+This example compares the current average forecast with a new trend forecast. The app simulates 15 days of demand for 50 stores, predicts the last day from the first 14, and records the absolute error.
+
+Use the [Python](https://github.com/statespace-tech/python-sdk), [TypeScript](https://github.com/statespace-tech/typescript-sdk), or [Go](https://github.com/statespace-tech/go-sdk) SDK in your app. Save this Python example as `app.py`.
 
 ```python
 from random import gauss
@@ -58,11 +60,14 @@ with statespace.init("demand") as run:
     for store in range(50):
         demand = [40 + day * 0.5 + gauss(0, 3) for day in range(15)]
         subject = f"store-{store}"
-        forecast = run.get_function(subject, default=fmean)(demand[:-1])
-        run.log(subject, {"error": abs(forecast - demand[-1])})
+        predict = run.get_function(subject, default=fmean)
+        predicted = predict(demand[:-1])
+        run.log(subject, {"error": abs(predicted - demand[-1])})
 ```
 
-Save the trend-based function as `forecast.py`:
+`get_function` assigns each store a forecast. Control stores use the app's `fmean` default; treatment stores use the candidate function defined below.
+
+Save the candidate trend forecast as `forecast.py`:
 
 ```python
 from statistics import linear_regression
@@ -73,21 +78,21 @@ def predict(history: list[float]) -> float:
     return intercept + slope * len(history)
 ```
 
-Build and publish the function.
+Build the Python function as a Wasm file and publish it as `forecast`.
 
 ```shell
 ssp function build ./forecast.py --language python --entry forecast:predict --output forecast.wasm
 ssp function publish forecast.wasm --name forecast
 ```
 
-Send half the traffic to the function.
+Create and start the experiment with a `0.5` weight for `forecast`. The remaining traffic uses the app's control default.
 
 ```shell
 ssp experiment create --name demand --variant forecast@latest=0.5
 ssp experiment start --name demand
 ```
 
-Create an SDK token and run the app.
+Create an SDK token, set it in the environment, and run the app.
 
 ```shell
 ssp token create --name quickstart
@@ -95,7 +100,7 @@ export STATESPACE_TOKEN=ssp_token_...
 python app.py
 ```
 
-Compare average forecast error by group.
+Compare the average error by group. `control` used the average forecast, and the `forecast@...` group used the trend forecast; lower is better.
 
 ```shell
 ssp query "SELECT group_name,avg((data->>'error')::float) FROM statespace.logs WHERE experiment_name='demand' GROUP BY 1"
