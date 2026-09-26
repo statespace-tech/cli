@@ -41,7 +41,7 @@ Install the SDK for the language used by the application you want to A/B test: [
 
 ## Quickstart
 
-Install the Python SDK, then create an API key:
+Install the Python SDK and create an API key:
 
 ```shell
 python -m pip install git+https://github.com/statespace-tech/python-sdk.git@feat/components
@@ -50,19 +50,18 @@ ssp token create --name quickstart
 export STATESPACE_TOKEN=ssp_token_...
 ```
 
-Save the candidate as `forecast.py`:
+Save the trend-based component as `forecast.py`:
 
 ```python
 from statistics import linear_regression
 
 
-def predict(history):
-    """Fit a trend and predict the next day's demand."""
+def predict(history: list[float]) -> float:
     slope, intercept = linear_regression(range(len(history)), history)
     return intercept + slope * len(history)
 ```
 
-Build and publish the candidate.
+Build and publish the component.
 
 ```shell
 ssp component build ./forecast.py --language python --entry forecast:predict --output forecast.wasm
@@ -75,29 +74,19 @@ Send half the traffic to the component.
 ssp experiment create --name demand --variant forecast@latest=0.5
 ```
 
-Save `app.py` to generate demand histories and measure each next-day error:
+Save the Python app as `app.py`:
 
 ```python
-from random import Random
+from random import gauss
 from statistics import fmean
 
-from statespace import Client
+from statespace import experiment
 
-rng = Random(42)
-client = Client()
-try:
-    experiment = client.experiment("demand")
-    for store in range(50):
-        base = rng.uniform(30, 60)
-        trend = rng.uniform(-1, 1)
-        history = [base + trend * day + rng.gauss(0, 3) for day in range(14)]
-        actual = base + trend * 14 + rng.gauss(0, 3)
-
-        run = experiment.assign(f"store-{store}")
-        forecast = run.execute(history, default=fmean)
-        run.log({"error": abs(forecast - actual)})
-finally:
-    client.close()
+test = experiment("demand")
+for store in range(50):
+    demand = [40 + day * 0.5 + gauss(0, 3) for day in range(15)]
+    run = test.assign(f"store-{store}")
+    run.log({"error": abs(run.execute(demand[:-1], default=fmean) - demand[-1])})
 ```
 
 Run the app.
