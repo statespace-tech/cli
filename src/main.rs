@@ -18,12 +18,12 @@ struct Cli {
     #[arg(long, env = "STATESPACE_URL", global = true)]
     endpoint: Option<String>,
     #[arg(
-        long = "account-token",
-        env = "STATESPACE_ACCOUNT_TOKEN",
+        long = "api-key",
+        env = "SSP_API_KEY",
         global = true,
         hide_env_values = true
     )]
-    token: Option<String>,
+    api_key: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -40,8 +40,8 @@ enum Command {
     Logout,
     /// Show the signed-in account.
     Account,
-    /// Manage SDK and CI tokens.
-    Token(TokenCommand),
+    /// Manage API keys.
+    Key(KeyCommand),
     /// Manage direct PostgreSQL access.
     Database(DatabaseCommand),
     /// Manage experiments and immutable versions.
@@ -59,21 +59,25 @@ enum Command {
 }
 
 #[derive(Args)]
-struct TokenCommand {
+struct KeyCommand {
     #[command(subcommand)]
-    command: TokenSubcommand,
+    command: KeySubcommand,
 }
 
 #[derive(Subcommand)]
-enum TokenSubcommand {
-    /// Create a token and print its secret once.
+enum KeySubcommand {
+    /// Create a key and print its secret once.
     Create {
         #[arg(short = 'n', long)]
         name: String,
+        #[arg(long, value_parser = ["runtime", "admin"], conflicts_with = "scopes", required_unless_present = "scopes")]
+        preset: Option<String>,
+        #[arg(long = "scope", value_parser = ["experiments:write", "functions:write", "runtime:read", "events:write", "query:read", "keys:manage"], required_unless_present = "preset")]
+        scopes: Vec<String>,
     },
-    /// List active tokens without their secrets.
+    /// List active keys without their secrets.
     List,
-    /// Revoke a token.
+    /// Revoke a key.
     Revoke {
         #[arg(long)]
         id: String,
@@ -313,18 +317,19 @@ struct ExperimentView {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct TokenView {
+struct KeyView {
     id: String,
     name: String,
     prefix: String,
+    scopes: Vec<String>,
     created_at: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct TokenSecret {
+struct KeySecret {
     #[serde(flatten)]
-    details: TokenView,
-    token: String,
+    details: KeyView,
+    key: String,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -378,7 +383,7 @@ async fn run() -> anyhow::Result<()> {
             .user_agent(concat!("statespace-cli/", env!("CARGO_PKG_VERSION")))
             .build()?,
         endpoint: endpoint.clone(),
-        token: cli.token.clone().or_else(|| settings.token.clone()),
+        token: cli.api_key.clone().or_else(|| settings.token.clone()),
     };
 
     match cli.command {
@@ -414,7 +419,7 @@ async fn run() -> anyhow::Result<()> {
             print_json(&json!({ "status": "logged_out" }))?;
         }
         Command::Account => print_json(&api.get::<AccountDetails>("/v1/account").await?)?,
-        Command::Token(command) => run_token(&api, command).await?,
+        Command::Key(command) => run_key(&api, command).await?,
         Command::Database(command) => run_database(&api, command).await?,
         Command::Experiment(command) => run_experiment(&api, command).await?,
         Command::Function(command) => run_function(&api, command).await?,
@@ -429,15 +434,22 @@ async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_token(api: &Api, command: TokenCommand) -> anyhow::Result<()> {
+async fn run_key(api: &Api, command: KeyCommand) -> anyhow::Result<()> {
     match command.command {
-        TokenSubcommand::Create { name } => print_json(
-            &api.send::<TokenSecret>(Method::POST, "/v1/tokens", Some(json!({ "name": name })))
+        KeySubcommand::Create { name, preset, scopes } => print_json(
+            &api.send::<KeySecret>(Method::POST, "/v1/keys", Some(json!({
+                "name": name,
+                "scopes": match preset.as_deref() {
+                    Some("runtime") => vec!["runtime:read", "events:write"],
+                    Some("admin") => vec!["experiments:write", "functions:write", "runtime:read", "events:write", "query:read", "keys:manage"],
+                    _ => scopes.iter().map(String::as_str).collect(),
+                },
+            })))
                 .await?,
         )?,
-        TokenSubcommand::List => print_json(&api.get::<Vec<TokenView>>("/v1/tokens").await?)?,
-        TokenSubcommand::Revoke { id } => {
-            api.delete(&format!("/v1/tokens/{id}")).await?;
+        KeySubcommand::List => print_json(&api.get::<Vec<KeyView>>("/v1/keys").await?)?,
+        KeySubcommand::Revoke { id } => {
+            api.delete(&format!("/v1/keys/{id}")).await?;
             print_json(&json!({ "revoked": id }))?;
         }
     }
@@ -722,7 +734,7 @@ impl Api {
         let token = self
             .token
             .as_deref()
-            .context("not logged in; run ssp login")?;
+            .context("authentication required; run ssp login or set SSP_API_KEY")?;
         Ok(self
             .client
             .request(method, format!("{}{}", self.endpoint, path))
@@ -787,7 +799,7 @@ async fn ensure_success(response: Response) -> anyhow::Result<()> {
 
 fn response_error(status: StatusCode, bytes: &[u8]) -> anyhow::Error {
     if status == StatusCode::UNAUTHORIZED {
-        return anyhow::anyhow!("session expired or invalid; run ssp login");
+        return anyhow::anyhow!("credential expired or invalid; run ssp login or set SSP_API_KEY");
     }
     let message = serde_json::from_slice::<Value>(bytes)
         .ok()
@@ -808,7 +820,16 @@ mod tests {
     #[test]
     fn parses_public_commands() {
         Cli::try_parse_from(["ssp", "login"]).unwrap();
-        Cli::try_parse_from(["ssp", "token", "create", "--name", "production"]).unwrap();
+        Cli::try_parse_from([
+            "ssp",
+            "key",
+            "create",
+            "--name",
+            "production",
+            "--preset",
+            "runtime",
+        ])
+        .unwrap();
         Cli::try_parse_from([
             "ssp",
             "database",

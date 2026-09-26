@@ -92,11 +92,9 @@ ssp experiment create --name demand --variant forecast@latest=0.5
 ssp experiment start --name demand
 ```
 
-Create an SDK token, set it in the environment, and run the app.
+Run the app with your saved login.
 
 ```shell
-ssp token create --name quickstart
-export STATESPACE_TOKEN=ssp_token_...
 python app.py
 ```
 
@@ -144,14 +142,15 @@ Publish the function to use it in experiments.
 ssp function publish forecast.wasm --name forecast
 ```
 
-## Tokens
+## API keys
 
-Tokens authenticate SDKs and CI jobs through `STATESPACE_TOKEN`. Create a separate token for each deployment so you can revoke it independently.
+Local SDKs use `ssp login`. In deployments, set `SSP_API_KEY`. A key can have any combination of `experiments:write`, `functions:write`, `runtime:read`, `events:write`, `query:read`, and `keys:manage`.
 
 ```shell
-ssp token create --name production
-ssp token list
-ssp token revoke --id tok_123
+ssp key create --name production --preset runtime
+ssp key create --name ci --scope experiments:write --scope functions:write
+ssp key list
+ssp key revoke --id key_123
 ```
 
 ## PostgreSQL

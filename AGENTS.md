@@ -5,7 +5,7 @@ The `ssp` CLI manages accounts, SDK tokens, PostgreSQL credentials, and experime
 ## Product rules
 
 - Keep experiments under `ssp experiment`.
-- Keep SDK and CI tokens under `ssp token`.
+- Keep API keys under `ssp key`.
 - Keep read-only SQL credentials under `ssp database credential`.
 - Create experiment definitions from YAML through the CLI.
 - Make each published experiment version immutable.
