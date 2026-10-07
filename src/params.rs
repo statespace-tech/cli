@@ -167,14 +167,16 @@ fn prebuilt(reference: &FunctionReference) -> String {
 }
 
 /// Upload a component unless the account already has it. Uploads are
-/// idempotent, so connection failures are retried.
+/// idempotent, so transport failures, such as a connection dropped mid-upload,
+/// are retried with backoff.
 fn upload(api: &Api, component: &Component) -> anyhow::Result<()> {
+    const ATTEMPTS: u32 = 5;
     let path = format!("/v1/artifacts/{}", component.sha256);
     let mut attempt = 1;
     loop {
         match try_upload(api, &path, component) {
-            Err(error) if attempt < 3 && is_connection_error(&error) => {
-                std::thread::sleep(std::time::Duration::from_secs(attempt));
+            Err(error) if attempt < ATTEMPTS && is_transport_error(&error) => {
+                std::thread::sleep(std::time::Duration::from_secs(1 << attempt));
                 attempt += 1;
             }
             result => return result,
@@ -197,10 +199,11 @@ fn try_upload(api: &Api, path: &str, component: &Component) -> anyhow::Result<()
     Ok(())
 }
 
-fn is_connection_error(error: &anyhow::Error) -> bool {
+/// A request that failed before an HTTP response arrived.
+fn is_transport_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<reqwest::Error>()
-        .is_some_and(|error| error.is_connect() || error.is_request() || error.is_timeout())
+        .is_some_and(|error| !error.is_status() && !error.is_decode() && !error.is_builder())
 }
 
 /// Hash everything a build depends on: the entry, the pinned tools, and the
