@@ -31,16 +31,10 @@ does to the outcomes you care about.
 
 ## Install
 
-Install `ssp` on macOS or Linux.
+Install the Statespace CLI on macOS or Linux.
 
 ```shell
 curl -fsSL https://statespace.com/install | bash
-```
-
-Or build it from source with Cargo.
-
-```shell
-cargo install statespace-cli
 ```
 
 ## Quickstart
