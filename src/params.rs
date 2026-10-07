@@ -166,13 +166,27 @@ fn prebuilt(reference: &FunctionReference) -> String {
     )
 }
 
-/// Upload a component unless the account already has it.
+/// Upload a component unless the account already has it. Uploads are
+/// idempotent, so connection failures are retried.
 fn upload(api: &Api, component: &Component) -> anyhow::Result<()> {
     let path = format!("/v1/artifacts/{}", component.sha256);
-    let status = api.request(Method::GET, &path)?.send()?.status();
+    let mut attempt = 1;
+    loop {
+        match try_upload(api, &path, component) {
+            Err(error) if attempt < 3 && is_connection_error(&error) => {
+                std::thread::sleep(std::time::Duration::from_secs(attempt));
+                attempt += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
+fn try_upload(api: &Api, path: &str, component: &Component) -> anyhow::Result<()> {
+    let status = api.request(Method::GET, path)?.send()?.status();
     if status == StatusCode::NOT_FOUND {
         crate::api::decode::<Value>(
-            api.request(Method::PUT, &path)?
+            api.request(Method::PUT, path)?
                 .header(reqwest::header::CONTENT_TYPE, "application/wasm")
                 .body(component.bytes.clone())
                 .send()?,
@@ -181,6 +195,12 @@ fn upload(api: &Api, component: &Component) -> anyhow::Result<()> {
         bail!("could not check {}: {status}", component.sha256);
     }
     Ok(())
+}
+
+fn is_connection_error(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<reqwest::Error>()
+        .is_some_and(|error| error.is_connect() || error.is_request() || error.is_timeout())
 }
 
 /// Hash everything a build depends on: the entry, the pinned tools, and the
