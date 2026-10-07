@@ -1,0 +1,7 @@
+/target/
+/dist/
+.env
+__pycache__/
+.DS_Store
+*.wasm
+!tests/fixtures/*.wasm
