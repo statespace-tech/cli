@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo package --locked
+      - run: sh -n install.sh
+      - run: shellcheck install.sh
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - run: cargo check --locked
+
+  binaries:
+    name: Main binary (${{ matrix.target }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, msrv]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install musl tools
+        if: contains(matrix.target, 'linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target "${{ matrix.target }}"
+      - run: scripts/package.sh "${{ matrix.target }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: main-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish-binaries:
+    name: Publish tested main binaries
+    needs: binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: main-*
+          path: dist
+          merge-multiple: true
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::256014691887:role/statespace-cli-publish
+          aws-region: us-west-2
+          role-session-name: statespace-cli-publish
+      - name: Publish immutable binaries and update main manifest
+        env:
+          CLI_COMMIT: ${{ github.sha }}
+        run: scripts/publish-main.sh "$CLI_COMMIT"
