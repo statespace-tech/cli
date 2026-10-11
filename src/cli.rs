@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[command(
     name = "ssp",
     version,
-    about = "Run A/B tests on functions and values in production",
+    about = "Run A/B tests in production",
     after_help = "Every command prints JSON. Documentation: https://docs.statespace.com"
 )]
 pub struct Cli {
@@ -32,23 +32,9 @@ pub enum Command {
     Logout,
     /// Show the signed-in account.
     Account,
-    /// Define reusable groups of parameter values.
-    #[command(subcommand)]
-    Group(GroupCommand),
     /// Compare groups against the application's defaults.
     #[command(subcommand)]
     Experiment(ExperimentCommand),
-    /// Build a function from source and run it locally in the SDK sandbox.
-    Run {
-        /// A function's source: `rerank.py:score`, `bm25.ts:rank`, or `./ranker:Score`.
-        function: String,
-        /// JSON input for the function.
-        #[arg(long)]
-        input: String,
-        /// Execution timeout in milliseconds.
-        #[arg(long, default_value_t = 5000)]
-        timeout_ms: u64,
-    },
     /// Manage API keys for applications and agents.
     #[command(subcommand)]
     Key(KeyCommand),
@@ -68,32 +54,6 @@ pub enum Command {
         #[arg(long)]
         before: Option<i64>,
     },
-}
-
-const PARAMETERS: &str = "Parameters as NAME=VALUE. A value is a function's source, such \
-as rerank.py:score, bm25.ts:rank, or ./ranker:Score; a JSON file; a text file; or a JSON \
-literal such as 20, true, or '\"text\"'.";
-
-#[derive(Subcommand)]
-pub enum GroupCommand {
-    /// Create a group.
-    Create {
-        name: String,
-        #[arg(required = true, value_name = "NAME=VALUE", help = PARAMETERS)]
-        parameters: Vec<String>,
-    },
-    /// Change parameters, creating the next version. `NAME=` removes a parameter.
-    Update {
-        name: String,
-        #[arg(required = true, value_name = "NAME=VALUE", help = PARAMETERS)]
-        parameters: Vec<String>,
-    },
-    /// List the newest version of each group.
-    List,
-    /// Show the newest version of a group.
-    Show { name: String },
-    /// Delete a group that no experiment uses.
-    Delete { name: String },
 }
 
 #[derive(Subcommand)]
@@ -261,15 +221,6 @@ mod tests {
         for arguments in [
             vec![
                 "ssp",
-                "group",
-                "create",
-                "bm25",
-                "ranker=rerank.py:score",
-                "top_k=50",
-            ],
-            vec!["ssp", "group", "update", "bm25", "top_k="],
-            vec![
-                "ssp",
                 "experiment",
                 "create",
                 "ranking",
@@ -286,17 +237,11 @@ mod tests {
                 "--outcome",
                 "click",
             ],
-            vec!["ssp", "run", "rerank.py:score", "--input", "[3,1,2]"],
             vec![
                 "ssp", "key", "create", "--name", "app", "--preset", "runtime",
             ],
         ] {
             Cli::try_parse_from(arguments).unwrap();
         }
-    }
-
-    #[test]
-    fn groups_need_parameters() {
-        assert!(Cli::try_parse_from(["ssp", "group", "create", "bm25"]).is_err());
     }
 }

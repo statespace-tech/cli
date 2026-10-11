@@ -23,20 +23,6 @@ fn ssp(arguments: &[&str]) -> (bool, Value, Value) {
 }
 
 #[test]
-fn builds_functions_only_from_source() {
-    let (ok, _, error) = ssp(&["run", "tests/fixtures/identity.wasm", "--input", "1"]);
-    assert!(!ok);
-    assert!(error["error"].as_str().unwrap().contains("pass its source"));
-}
-
-#[test]
-fn rejects_unsupported_sources() {
-    let (ok, _, error) = ssp(&["run", "Cargo.toml", "--input", "1"]);
-    assert!(!ok);
-    assert!(error["error"].as_str().unwrap().contains("Cargo.toml"));
-}
-
-#[test]
 fn reports_errors_as_json() {
     let (ok, _, error) = ssp(&["experiment", "list"]);
     assert!(!ok);
@@ -45,13 +31,4 @@ fn reports_errors_as_json() {
     let (ok, _, error) = ssp(&["experiment", "delete", "ranking"]);
     assert!(!ok);
     assert!(error["error"].as_str().unwrap().contains("--yes"));
-
-    let (ok, _, error) = ssp(&["run", "examples/rerank.py:rerank", "--input", "not json"]);
-    assert!(!ok);
-    assert!(
-        error["error"]
-            .as_str()
-            .unwrap()
-            .contains("--input must be JSON")
-    );
 }
