@@ -53,10 +53,10 @@ pub fn token(api: &Api, command: TokenCommand) -> anyhow::Result<()> {
 pub fn database(api: &Api, command: DatabaseCommand) -> anyhow::Result<()> {
     let DatabaseCommand::Credential(command) = command;
     match command {
-        CredentialCommand::Create { name } => print(&api.send::<Value>(
+        CredentialCommand::Create { name, app } => print(&api.send::<Value>(
             Method::POST,
             "/v1/database/credentials",
-            &json!({ "name": name }),
+            &json!({ "name": name, "app": app }),
         )?),
         CredentialCommand::List => print(&api.get::<Value>("/v1/database/credentials")?),
         CredentialCommand::Revoke { id } => {

@@ -40,7 +40,7 @@ pub enum Command {
     /// Publish signed, ready-to-run builds of an app.
     #[command(subcommand)]
     Variant(VariantCommand),
-    /// Compare groups against the application's defaults.
+    /// Compare variants against the deployed version of an app.
     #[command(subcommand)]
     Experiment(ExperimentCommand),
     /// Manage API keys for applications and agents.
@@ -49,7 +49,7 @@ pub enum Command {
     /// Manage signed-in terminal sessions.
     #[command(subcommand)]
     Token(TokenCommand),
-    /// Manage read-only PostgreSQL access to runs and outcomes.
+    /// Manage read-only PostgreSQL access to runs, outcomes, and logs.
     #[command(subcommand)]
     Database(DatabaseCommand),
     /// Show event storage usage and the account quota.
@@ -156,12 +156,22 @@ pub enum ExperimentCommand {
     /// Create an experiment as a draft.
     Create {
         name: String,
+        #[arg(long, env = "STATESPACE_APP")]
+        app: String,
+        /// CEL over `request` that yields the subject ID. Defaults to
+        /// `request.cookies.ssp_sid`, a cookie the host sets. It cannot
+        /// change after the experiment starts.
+        #[arg(long)]
+        subject: Option<String>,
         #[command(flatten)]
         settings: Settings,
     },
     /// Change the draft. The running version changes only on `start`.
     Update {
         name: String,
+        /// CEL over `request` that yields the subject ID. Only before the first start.
+        #[arg(long)]
+        subject: Option<String>,
         #[command(flatten)]
         settings: Settings,
         /// Remove the eligibility rule.
@@ -169,22 +179,31 @@ pub enum ExperimentCommand {
         no_eligibility: bool,
     },
     /// List experiments.
-    List,
+    List {
+        #[arg(long, env = "STATESPACE_APP")]
+        app: Option<String>,
+    },
     /// Show an experiment's draft and its published version.
     Show { name: String },
-    /// Publish the draft, pinning each group's newest version, and run it.
+    /// Publish the draft, pinning each variant's newest version, and run it.
     Start {
         name: String,
         /// Restart this published version instead.
         #[arg(long)]
         version: Option<u32>,
+        #[arg(long)]
+        note: Option<String>,
     },
-    /// Stop the running version. SDKs return the application's defaults.
-    Stop { name: String },
-    /// Compare an outcome across groups.
+    /// Stop the running version. Hosts route its subjects to control.
+    Stop {
+        name: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Compare an outcome across variants.
     Results {
         name: String,
-        /// Outcome name logged by the SDK.
+        /// Outcome name the app prints.
         #[arg(long)]
         outcome: String,
         /// Numeric or boolean field to sum per subject. Omit for the share
@@ -195,9 +214,7 @@ pub enum ExperimentCommand {
         #[arg(long)]
         version: Option<u32>,
     },
-    /// Erase one subject's runs and outcomes.
-    EraseSubject { name: String, subject: String },
-    /// Delete an experiment with all of its versions, runs, and outcomes.
+    /// Delete a stopped experiment with all of its versions and runs.
     Delete {
         name: String,
         /// Confirm permanent deletion.
@@ -208,18 +225,23 @@ pub enum ExperimentCommand {
 
 #[derive(Args)]
 pub struct Settings {
-    /// A group and its share of eligible subjects, such as `bm25=0.2`. Repeat
-    /// for each group; control receives the rest. Replaces the draft's groups.
-    #[arg(long = "group", value_name = "NAME=WEIGHT")]
-    pub groups: Vec<String>,
-    /// CEL expression over the SDK `context`, such as `context.country == "US"`.
+    /// A variant and its share of the experiment's subjects, such as
+    /// `feature-x=0.5`. Repeat for each variant; control receives the rest.
+    /// Replaces the draft's variants.
+    #[arg(long = "variant", value_name = "NAME=WEIGHT")]
+    pub variants: Vec<String>,
+    /// The share of the app's subjects the experiment holds while it runs.
+    /// Running experiments of an app never share subjects. Defaults to 1.
+    #[arg(long)]
+    pub traffic: Option<f64>,
+    /// CEL over `request`, such as `request.headers["cf-ipcountry"] == "US"`.
     #[arg(long)]
     pub eligibility: Option<String>,
-    /// Label for the subject identifier passed to the SDK.
-    #[arg(long)]
-    pub assignment: Option<String>,
     #[arg(long)]
     pub description: Option<String>,
+    /// A note for the people and agents who read this experiment later.
+    #[arg(long)]
+    pub note: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -293,6 +315,9 @@ pub enum CredentialCommand {
     Create {
         #[arg(long)]
         name: String,
+        /// Limit the credential to one app's schema. Omit for every app.
+        #[arg(long)]
+        app: Option<String>,
     },
     /// List credentials without passwords.
     List,
@@ -331,22 +356,45 @@ mod tests {
                 "ssp",
                 "experiment",
                 "create",
-                "ranking",
-                "--group",
-                "bm25=0.2",
+                "checkout",
+                "--app",
+                "web",
+                "--variant",
+                "feature-x=0.5",
+                "--traffic",
+                "0.2",
+                "--note",
+                "why",
             ],
-            vec!["ssp", "experiment", "update", "ranking", "--no-eligibility"],
-            vec!["ssp", "experiment", "start", "ranking"],
+            vec![
+                "ssp",
+                "experiment",
+                "update",
+                "checkout",
+                "--no-eligibility",
+            ],
+            vec!["ssp", "experiment", "start", "checkout", "--note", "go"],
+            vec!["ssp", "experiment", "stop", "checkout"],
             vec![
                 "ssp",
                 "experiment",
                 "results",
-                "ranking",
+                "checkout",
                 "--outcome",
-                "click",
+                "purchase",
             ],
             vec![
                 "ssp", "key", "create", "--name", "app", "--preset", "runtime",
+            ],
+            vec![
+                "ssp",
+                "database",
+                "credential",
+                "create",
+                "--name",
+                "a",
+                "--app",
+                "web",
             ],
         ] {
             Cli::try_parse_from(arguments).unwrap();
