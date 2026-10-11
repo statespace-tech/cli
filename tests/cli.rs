@@ -196,6 +196,18 @@ fn local_hosts_route_requests_to_variants() {
     assert_eq!(body["greeting"], "hi", "variants get --variant-env");
     assert!(cookies.iter().all(|cookie| !cookie.starts_with("ssp_sid=")));
 
+    // Clients may speak HTTP/2 to the host.
+    let http2 = reqwest::blocking::Client::builder()
+        .http2_prior_knowledge()
+        .build()
+        .unwrap()
+        .get(format!("http://127.0.0.1:{port}/"))
+        .header("cookie", "ssp_sid=u_42")
+        .send()
+        .unwrap();
+    assert_eq!(http2.version(), reqwest::Version::HTTP_2);
+    assert_eq!(http2.json::<Value>().unwrap()["subject"], "u_42");
+
     // Stopping the host stops the app's processes too.
     assert!(host.stop().is_some_and(|status| status.success()));
     assert!(get(port, &[]).is_none());

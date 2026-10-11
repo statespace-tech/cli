@@ -202,6 +202,8 @@ async fn forward(
     let client_upgrade = upgrade.then(|| hyper::upgrade::on(&mut request));
     let (mut parts, body) = request.into_parts();
     parts.uri = upstream_uri(port, &parts.uri);
+    // Clients may speak HTTP/2; processes are reached over HTTP/1.1.
+    parts.version = http::Version::HTTP_11;
     let upstream = Request::from_parts(parts, body.boxed());
 
     let mut response = match shared.client.request(upstream).await {
