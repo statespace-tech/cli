@@ -1,72 +1,83 @@
 ---
 name: statespace
-description: Run A/B tests on functions, prompts, and configuration in production with the Statespace `ssp` CLI. Use when asked to test a code change on live traffic, compare variants, roll out a change gradually, or read experiment results.
+description: A/B test whole versions of an app in production with the Statespace `ssp` CLI. Use when asked to test a code change on live traffic, compare a branch against production, roll out a change gradually, or read experiment results.
 ---
 
 # Statespace
 
-Statespace measures the effect of a change on live traffic. A **group** is a named set of
-parameters (functions or JSON values). An **experiment** sends a share of eligible
-subjects to each group; the rest, **control**, run the application's existing code. The
-application reads parameters with an SDK and logs outcomes such as clicks or purchases.
+Statespace measures the effect of a code change on live traffic. A **variant** is a signed,
+ready-to-run build of an app, usually a branch. An **experiment** sends a share of the
+app's subjects to each variant; the rest, **control**, get the deployed code. `ssp host`
+runs control and the variants side by side and routes each subject to one of them. Apps
+report outcomes, such as purchases, by printing a JSON line.
 
-Every `ssp` command prints JSON. Errors print `{"error": "..."}` and exit with status 1.
+Every `ssp` command except `ssp host` prints JSON. Errors print `{"error": "..."}` and exit
+with status 1.
 
 ## The loop
 
-1. Read the current results before changing anything.
+1. Read what has been tried and what happened before changing anything.
 
    ```shell
-   ssp experiment list
+   ssp experiment list --app <app>
    ssp experiment results <experiment> --outcome <outcome>
+   psql "$DATABASE_URL" -c "SELECT * FROM <app>.notes ORDER BY timestamp DESC LIMIT 20"
    ```
 
-2. Write one candidate change as a function. It takes one JSON value and returns one.
-   Use the standard library or pure-language packages; the sandbox has no network,
-   files, or native extensions.
+2. Make one change on a branch. If it measures something new, print an outcome where it
+   happens: `{"statespace": "<outcome>", "subject": "<subject id>", ...fields}`. The
+   subject is the `x-statespace-subject` request header.
 
-3. Test it locally with representative inputs.
+3. Try it locally against the deployed code, choosing the variant with a header.
 
    ```shell
-   ssp run rerank.py:score --input '[1, 3, 2]'
+   ssp host --local --command "<start command with {port}>" --variant mine=<branch checkout>
+   curl -H 'x-statespace-variant: mine' localhost:8080/<path>
    ```
 
-4. Create or update the group, then the experiment's draft.
+4. Push the branch. CI builds it like production and publishes it, signed with a key that
+   only CI holds:
 
    ```shell
-   ssp group create <group> ranker=rerank.py:score top_k=20
-   ssp group update <group> ranker=rerank.py:score
-   ssp experiment create <experiment> --group <group>=0.05
+   ssp variant create <variant> <build directory> --app <app>
    ```
 
-5. Start with a small weight. `start` publishes the draft as a new immutable version.
+5. Create or update the experiment, with a note that states the hypothesis. Start small.
 
    ```shell
-   ssp experiment start <experiment>
+   ssp experiment create <experiment> --app <app> --variant <variant>=0.5 --traffic 0.05 \
+     --note "<why this should move the outcome>"
+   ssp experiment start <experiment> --note "<what this run tests>"
    ```
 
-6. Wait for outcomes, then decide: raise the weight, revise the group, or stop.
+6. Check that the variant runs before waiting for outcomes.
 
    ```shell
-   ssp experiment results <experiment> --outcome <outcome>
-   ssp experiment update <experiment> --group <group>=0.2 && ssp experiment start <experiment>
-   ssp experiment stop <experiment>
+   ssp app hosts <app>
+   ssp variant logs <variant> --app <app>
    ```
 
-## Values
+7. Wait for outcomes, then decide: raise `--traffic`, publish a fix, or stop. Leave a note
+   with the evidence either way.
 
-`NAME=VALUE` resolves, in order, to: a function's source (`file.py:entry`, `file.ts:entry`,
-`file.cpp:entry`, `./go-or-rust-project:Entry`); a `.json` file; any other file as text; or
-a JSON literal. `ssp` builds every function itself; prebuilt `.wasm` files are rejected. Quote string literals as JSON: `model='"claude-sonnet-5-5"'`. An empty
-value in `group update` removes a parameter.
+   ```shell
+   ssp experiment results <experiment> --outcome <outcome> --metric <field>
+   ssp experiment update <experiment> --traffic 0.2 && ssp experiment start <experiment>
+   ssp experiment stop <experiment> --note "<result and decision>"
+   ```
 
 ## Rules
 
-- Change one idea per group. Combine parameters in one group only to test them together.
-- Each parameter must have the same type in every group of an experiment.
-- Never raise a weight without reading `results`. An `effect` interval that includes 0 is
+- Change one idea per variant, so a result says what caused it.
+- A variant shares the app's database and services with control. Never change the
+  database schema in a variant; land migrations in the deployed code first.
+- Never raise traffic without reading `results`. An `effect` interval that includes 0 is
   not evidence of a difference.
-- Check the `statespace.error` outcome. It counts parameters that fell back to the
-  default, such as a function that failed or timed out.
-- `ssp experiment delete` and `ssp token revoke-all` need `--yes` and cannot be undone.
-  Ask before running them.
+- Check `ssp variant logs` and the `metrics` view for errors and latency before trusting
+  outcomes. A failing variant sends its subjects to control.
+- `ssp experiment start` fails when the app's other experiments already hold the traffic
+  it asks for, or when hosts cannot run more variants. Stop an experiment or ask for less.
+- Shipping a winner means merging its branch and deploying it as usual. Statespace does not
+  deploy control.
+- `ssp app delete`, `ssp experiment delete`, and `ssp token revoke-all` need `--yes` and
+  cannot be undone. Ask before running them.

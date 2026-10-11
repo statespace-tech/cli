@@ -2,6 +2,31 @@
 
 Notable changes to the `ssp` CLI. Releases follow semantic versioning.
 
+## 0.2.0 - Unreleased
+
+Experiments compare whole versions of an app instead of functions and values. It replaces
+the 0.1.1 model.
+
+### Added
+
+- `ssp app` creates apps. Each app has its own variants, experiments, and schema of
+  analysis views.
+- `ssp variant create` packages a ready-to-run build reproducibly, uploads it, and signs it
+  with a key from `ssp variant keygen`. `ssp variant logs` shows a variant's lifecycle
+  events and captured output.
+- `ssp host` runs an app's deployed code and its variants behind a proxy that assigns each
+  request's subject. It verifies signatures with `--trust-key`, records outcome lines that
+  processes print, and can capture output and requests with `--capture`.
+- `ssp experiment` takes `--variant`, `--traffic`, `--subject`, and `--note`. Running
+  experiments of an app hold disjoint shares of its subjects.
+- `ssp database credential create --app` limits a credential to one app.
+- `ssp app erase-subject` erases a subject's data in an app.
+
+### Removed
+
+- `ssp group`, `ssp run`, and the function builders and their toolchains.
+- `ssp experiment erase-subject`. Use `ssp app erase-subject`.
+
 ## 0.1.1 - 2026-10-07
 
 The first release of the group and experiment model. It replaces the 0.1.0 commands.
