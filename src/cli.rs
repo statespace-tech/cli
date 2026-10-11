@@ -32,6 +32,9 @@ pub enum Command {
     Logout,
     /// Show the signed-in account.
     Account,
+    /// Define apps: one codebase and deployment each.
+    #[command(subcommand)]
+    App(AppCommand),
     /// Compare groups against the application's defaults.
     #[command(subcommand)]
     Experiment(ExperimentCommand),
@@ -53,6 +56,40 @@ pub enum Command {
         /// Return records older than this ID.
         #[arg(long)]
         before: Option<i64>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AppCommand {
+    /// Create an app and its analysis schema.
+    Create {
+        /// Lowercase letters, digits, and underscores, starting with a letter.
+        name: String,
+        /// Days to keep captured output. Defaults to 7.
+        #[arg(long)]
+        output_retention: Option<i32>,
+    },
+    /// Change an app's settings.
+    Update {
+        name: String,
+        /// Days to keep captured output.
+        #[arg(long, required = true)]
+        output_retention: Option<i32>,
+    },
+    /// List apps and the traffic their running experiments hold.
+    List,
+    /// Show an app.
+    Show { name: String },
+    /// List the hosts that recently reported for an app.
+    Hosts { name: String },
+    /// Erase one subject's runs, outcomes, and requests in an app.
+    EraseSubject { name: String, subject: String },
+    /// Delete an app with its variants, experiments, and events.
+    Delete {
+        name: String,
+        /// Confirm permanent deletion.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -219,6 +256,7 @@ mod tests {
     #[test]
     fn parses_the_quickstart() {
         for arguments in [
+            vec!["ssp", "app", "create", "web"],
             vec![
                 "ssp",
                 "experiment",

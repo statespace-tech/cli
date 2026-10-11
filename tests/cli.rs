@@ -28,6 +28,10 @@ fn reports_errors_as_json() {
     assert!(!ok);
     assert!(error["error"].as_str().unwrap().contains("ssp login"));
 
+    let (ok, _, error) = ssp(&["app", "delete", "web"]);
+    assert!(!ok);
+    assert!(error["error"].as_str().unwrap().contains("--yes"));
+
     let (ok, _, error) = ssp(&["experiment", "delete", "ranking"]);
     assert!(!ok);
     assert!(error["error"].as_str().unwrap().contains("--yes"));

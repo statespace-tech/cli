@@ -1,6 +1,7 @@
 //! Command handlers. Each prints one JSON document.
 
 mod access;
+mod app;
 mod auth;
 mod experiment;
 
@@ -24,6 +25,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Login { no_open } => auth::login(&api, no_open),
         Command::Logout => auth::logout(&api),
         Command::Account => print(&api.get::<Value>("/v1/account")?),
+        Command::App(command) => app::run(&api, command),
         Command::Experiment(command) => experiment::run(&api, command),
         Command::Key(command) => access::key(&api, command),
         Command::Token(command) => access::token(&api, command),
