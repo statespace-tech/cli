@@ -1,5 +1,7 @@
 //! Command-line arguments.
 
+use std::path::PathBuf;
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
@@ -35,6 +37,9 @@ pub enum Command {
     /// Define apps: one codebase and deployment each.
     #[command(subcommand)]
     App(AppCommand),
+    /// Publish signed, ready-to-run builds of an app.
+    #[command(subcommand)]
+    Variant(VariantCommand),
     /// Compare groups against the application's defaults.
     #[command(subcommand)]
     Experiment(ExperimentCommand),
@@ -88,6 +93,59 @@ pub enum AppCommand {
     Delete {
         name: String,
         /// Confirm permanent deletion.
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum VariantCommand {
+    /// Print a new signing key pair. Keep the private key in CI.
+    Keygen,
+    /// Package, sign, and upload a ready-to-run build as the next version of a variant.
+    Create {
+        /// The variant's name, such as `feature-x`.
+        name: String,
+        /// The directory to package: the build as it runs, dependencies included.
+        path: PathBuf,
+        #[arg(long, env = "STATESPACE_APP")]
+        app: String,
+        /// How to start this variant, with `{port}` for its port. Defaults to the host's command.
+        #[arg(long)]
+        command: Option<String>,
+        /// The commit the build came from. Defaults to the directory's Git HEAD.
+        #[arg(long)]
+        commit: Option<String>,
+        /// The base64 private key from `ssp variant keygen`.
+        #[arg(long, env = "SSP_SIGNING_KEY", hide_env_values = true)]
+        sign_key: String,
+    },
+    /// List the newest version of each variant of an app.
+    List {
+        #[arg(long, env = "STATESPACE_APP")]
+        app: String,
+    },
+    /// Show every version of a variant.
+    Show {
+        name: String,
+        #[arg(long, env = "STATESPACE_APP")]
+        app: String,
+    },
+    /// Show a variant's newest lifecycle events and captured output.
+    Logs {
+        name: String,
+        #[arg(long, env = "STATESPACE_APP")]
+        app: String,
+        #[arg(long)]
+        version: Option<u32>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
+    /// Delete a variant that no experiment uses.
+    Delete {
+        name: String,
+        #[arg(long, env = "STATESPACE_APP")]
+        app: String,
         #[arg(long)]
         yes: bool,
     },
@@ -257,6 +315,18 @@ mod tests {
     fn parses_the_quickstart() {
         for arguments in [
             vec!["ssp", "app", "create", "web"],
+            vec!["ssp", "variant", "keygen"],
+            vec![
+                "ssp",
+                "variant",
+                "create",
+                "feature-x",
+                "./build",
+                "--app",
+                "web",
+                "--sign-key",
+                "k",
+            ],
             vec![
                 "ssp",
                 "experiment",

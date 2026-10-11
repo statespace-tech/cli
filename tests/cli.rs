@@ -23,6 +23,14 @@ fn ssp(arguments: &[&str]) -> (bool, Value, Value) {
 }
 
 #[test]
+fn prints_signing_key_pairs() {
+    let (ok, keys, _) = ssp(&["variant", "keygen"]);
+    assert!(ok);
+    assert_eq!(keys["private_key"].as_str().unwrap().len(), 44);
+    assert_eq!(keys["public_key"].as_str().unwrap().len(), 44);
+}
+
+#[test]
 fn reports_errors_as_json() {
     let (ok, _, error) = ssp(&["experiment", "list"]);
     assert!(!ok);

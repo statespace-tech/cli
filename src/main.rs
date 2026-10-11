@@ -4,9 +4,11 @@
 //! `{"error": "..."}` on standard error and exit with status 1.
 
 mod api;
+mod bundle;
 mod cli;
 mod commands;
 mod config;
+mod signing;
 
 use clap::Parser;
 use serde_json::json;

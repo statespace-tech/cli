@@ -4,6 +4,7 @@ mod access;
 mod app;
 mod auth;
 mod experiment;
+mod variant;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -26,6 +27,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Logout => auth::logout(&api),
         Command::Account => print(&api.get::<Value>("/v1/account")?),
         Command::App(command) => app::run(&api, command),
+        Command::Variant(command) => variant::run(&api, command),
         Command::Experiment(command) => experiment::run(&api, command),
         Command::Key(command) => access::key(&api, command),
         Command::Token(command) => access::token(&api, command),
