@@ -1,13 +1,15 @@
-//! `ssp`: run A/B tests in production.
+//! `ssp`: A/B test whole versions of an app in production.
 //!
-//! Every command prints one JSON document on standard output. Errors print
-//! `{"error": "..."}` on standard error and exit with status 1.
+//! Every command except `ssp host` prints one JSON document on standard
+//! output. Errors print `{"error": "..."}` on standard error and exit with
+//! status 1.
 
 mod api;
 mod bundle;
 mod cli;
 mod commands;
 mod config;
+mod host;
 mod signing;
 
 use clap::Parser;

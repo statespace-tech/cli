@@ -1,6 +1,6 @@
 [package]
 name = "statespace-cli"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.93"
 license = "Apache-2.0"
@@ -8,9 +8,9 @@ authors = ["Statespace Technologies, Inc."]
 homepage = "https://statespace.com"
 documentation = "https://docs.statespace.com"
 repository = "https://github.com/statespace-tech/cli"
-description = "Run A/B tests in production and read their results"
+description = "A/B test whole versions of your app in production, and read their results"
 readme = "README.md"
-keywords = ["experimentation", "ab-testing", "agents", "cli"]
+keywords = ["experimentation", "ab-testing", "proxy", "agents", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 include = ["src/**", "tests/**", "Cargo.lock", "CHANGELOG.md", "LICENSE", "NOTICE", "README.md"]
 
@@ -21,19 +21,32 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
+bytes = "1"
+cel-interpreter = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
 ed25519-dalek = "2"
 flate2 = "1"
+http = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "server-auto", "tokio"] }
 rand = "0.9"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 tar = "0.4"
 tempfile = "3"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "0.9"
 webbrowser = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2"

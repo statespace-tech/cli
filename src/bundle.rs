@@ -6,8 +6,8 @@ use std::{
     path::Path,
 };
 
-use anyhow::bail;
-use flate2::{Compression, GzBuilder};
+use anyhow::{Context, bail};
+use flate2::{Compression, GzBuilder, read::GzDecoder};
 use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
@@ -102,6 +102,27 @@ fn mode(metadata: &fs::Metadata) -> u32 {
     if metadata.is_dir() { 0o755 } else { 0o644 }
 }
 
+/// Unpack a bundle into `destination`, which must not exist. The bundle is
+/// unpacked beside it first, so a partial unpack is never used.
+pub fn unpack(bundle: &Path, destination: &Path) -> anyhow::Result<()> {
+    let parent = destination
+        .parent()
+        .context("the bundle destination has no parent")?;
+    fs::create_dir_all(parent)?;
+    let staging = tempfile::tempdir_in(parent)?;
+    let mut archive = tar::Archive::new(GzDecoder::new(File::open(bundle)?));
+    archive.set_preserve_permissions(true);
+    archive.set_overwrite(false);
+    for entry in archive.entries()? {
+        // `unpack_in` refuses paths that leave the directory.
+        if !entry?.unpack_in(staging.path())? {
+            bail!("the bundle contains a path outside its directory");
+        }
+    }
+    fs::rename(staging.keep(), destination)
+        .with_context(|| format!("could not move the bundle to {}", destination.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Read;
@@ -115,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn packing_is_reproducible() {
+    fn packing_is_reproducible_and_round_trips() {
         let source = tempfile::tempdir().unwrap();
         fs::create_dir_all(source.path().join("app/.git")).unwrap();
         fs::create_dir_all(source.path().join(".git")).unwrap();
@@ -139,5 +160,32 @@ mod tests {
             hash(File::open(first.file.path()).unwrap()).unwrap(),
             (first.sha256.clone(), first.size)
         );
+
+        let target = tempfile::tempdir().unwrap();
+        let destination = target.path().join("bundle");
+        unpack(first.file.path(), &destination).unwrap();
+        assert_eq!(
+            fs::read_to_string(destination.join("app/main.py")).unwrap(),
+            "print('hi')"
+        );
+        assert!(
+            !destination.join(".git").exists(),
+            "the root .git is left out"
+        );
+        assert!(destination.join("app/.git").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(destination.join("run.sh"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o111, 0o111);
+            assert_eq!(
+                fs::read_link(destination.join("link.py")).unwrap(),
+                Path::new("app/main.py")
+            );
+        }
+        assert!(unpack(first.file.path(), &destination).is_err());
     }
 }

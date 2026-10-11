@@ -1,4 +1,4 @@
-//! Command handlers. Each prints one JSON document.
+//! Command handlers. Each prints one JSON document, except `ssp host`.
 
 mod access;
 mod app;
@@ -13,6 +13,7 @@ use crate::{
     api::Api,
     cli::{Cli, Command},
     config::{DEFAULT_ENDPOINT, Settings},
+    host,
 };
 
 pub fn run(cli: Cli) -> anyhow::Result<()> {
@@ -29,6 +30,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::App(command) => app::run(&api, command),
         Command::Variant(command) => variant::run(&api, command),
         Command::Experiment(command) => experiment::run(&api, command),
+        Command::Host(arguments) => host::run(api, *arguments),
         Command::Key(command) => access::key(&api, command),
         Command::Token(command) => access::token(&api, command),
         Command::Database(command) => access::database(&api, command),

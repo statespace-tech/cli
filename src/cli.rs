@@ -8,8 +8,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[command(
     name = "ssp",
     version,
-    about = "Run A/B tests in production",
-    after_help = "Every command prints JSON. Documentation: https://docs.statespace.com"
+    about = "A/B test whole versions of your app in production",
+    after_help = "Every command except `ssp host` prints JSON. Documentation: https://docs.statespace.com"
 )]
 pub struct Cli {
     /// Statespace API URL.
@@ -43,6 +43,8 @@ pub enum Command {
     /// Compare variants against the deployed version of an app.
     #[command(subcommand)]
     Experiment(ExperimentCommand),
+    /// Run an app and its variants behind a proxy that assigns each subject.
+    Host(Box<HostArgs>),
     /// Manage API keys for applications and agents.
     #[command(subcommand)]
     Key(KeyCommand),
@@ -244,13 +246,73 @@ pub struct Settings {
     pub note: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum Capture {
+    Stdout,
+    Stderr,
+    Http,
+}
+
+#[derive(Args)]
+pub struct HostArgs {
+    /// The app whose running experiments to serve.
+    #[arg(long, env = "STATESPACE_APP", required_unless_present = "local")]
+    pub app: Option<String>,
+    /// The public address, which replaces the app's own.
+    #[arg(long, env = "STATESPACE_LISTEN", default_value = "0.0.0.0:8080")]
+    pub listen: String,
+    /// How to start the app, with `{port}` for the port it must listen on
+    /// at 127.0.0.1. Control runs it in the current directory.
+    #[arg(long)]
+    pub command: String,
+    /// A path that must answer 200 before a process gets traffic. Without
+    /// it, a process is ready once its port accepts connections.
+    #[arg(long)]
+    pub health: Option<String>,
+    /// A base64 public key whose signed variants may run. Repeat to rotate keys.
+    #[arg(
+        long = "trust-key",
+        value_name = "KEY",
+        required_unless_present = "local"
+    )]
+    pub trust_keys: Vec<String>,
+    /// How many variants this host runs at once, besides control.
+    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..=64))]
+    pub max_variants: u32,
+    /// Seconds to keep routing with the last configuration while Statespace
+    /// is unreachable. After that, every subject gets control.
+    #[arg(long, default_value_t = 300)]
+    pub stale_after: u64,
+    /// An environment variable that variants get and control does not, such
+    /// as a database URL without schema permissions. Repeat for each.
+    #[arg(long = "variant-env", value_name = "NAME=VALUE")]
+    pub variant_env: Vec<String>,
+    /// Send this to Statespace too. Repeat for each.
+    #[arg(long = "capture", value_enum)]
+    pub capture: Vec<Capture>,
+    /// A regular expression whose matches are replaced in captured output
+    /// before it leaves this machine. Repeat for each.
+    #[arg(long = "redact", value_name = "REGEX")]
+    pub redact: Vec<String>,
+    /// Where downloaded variants are kept.
+    #[arg(long, env = "STATESPACE_CACHE")]
+    pub cache: Option<PathBuf>,
+    /// Run local directories as variants, unsigned and without Statespace.
+    /// Choose a variant per request with the `x-statespace-variant` header.
+    #[arg(long, conflicts_with_all = ["trust_keys", "app"])]
+    pub local: bool,
+    /// A local variant as NAME=PATH, with `--local`. Repeat for each.
+    #[arg(long = "variant", value_name = "NAME=PATH", requires = "local")]
+    pub variants: Vec<String>,
+}
+
 #[derive(Subcommand)]
 pub enum KeyCommand {
     /// Create a key. Its secret is printed only once.
     Create {
         #[arg(long)]
         name: String,
-        /// `runtime` for applications; `admin` for agents and automation.
+        /// `runtime` for `ssp host`; `admin` for agents and automation.
         #[arg(long, conflicts_with = "scopes", required_unless_present = "scopes")]
         preset: Option<KeyPreset>,
         #[arg(long = "scope", value_parser = SCOPES)]
@@ -384,6 +446,31 @@ mod tests {
                 "purchase",
             ],
             vec![
+                "ssp",
+                "host",
+                "--app",
+                "web",
+                "--command",
+                "serve {port}",
+                "--trust-key",
+                "k",
+                "--capture",
+                "stdout",
+                "--capture",
+                "http",
+                "--variant-env",
+                "A=b",
+            ],
+            vec![
+                "ssp",
+                "host",
+                "--local",
+                "--command",
+                "serve {port}",
+                "--variant",
+                "feature-x=../x",
+            ],
+            vec![
                 "ssp", "key", "create", "--name", "app", "--preset", "runtime",
             ],
             vec![
@@ -397,7 +484,24 @@ mod tests {
                 "web",
             ],
         ] {
-            Cli::try_parse_from(arguments).unwrap();
+            Cli::try_parse_from(&arguments)
+                .unwrap_or_else(|error| panic!("{arguments:?}: {error}"));
         }
+    }
+
+    #[test]
+    fn production_hosts_need_trusted_keys() {
+        let missing = ["ssp", "host", "--app", "web", "--command", "serve {port}"];
+        assert!(Cli::try_parse_from(missing).is_err());
+        let unsigned = [
+            "ssp",
+            "host",
+            "--local",
+            "--command",
+            "x {port}",
+            "--trust-key",
+            "k",
+        ];
+        assert!(Cli::try_parse_from(unsigned).is_err());
     }
 }

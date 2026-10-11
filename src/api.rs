@@ -33,6 +33,10 @@ impl Api {
         &self.endpoint
     }
 
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref()
+    }
+
     pub fn with_token(&self, token: String) -> Self {
         Self {
             client: self.client.clone(),
