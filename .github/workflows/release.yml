@@ -119,3 +119,14 @@ jobs:
           --repo "$GITHUB_REPOSITORY"
           --generate-notes
           --verify-tag
+      - name: Remove earlier releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        # Only the latest release is published. Tags stay, so history keeps its versions.
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' |
+            while read -r tag; do
+              [[ "$tag" == "$GITHUB_REF_NAME" ]] && continue
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
+            done

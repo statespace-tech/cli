@@ -3,7 +3,6 @@
 set -eu
 
 repository=${STATESPACE_REPOSITORY:-statespace-tech/cli}
-version=${STATESPACE_VERSION:-latest}
 install_dir=${STATESPACE_INSTALL_DIR:-"${HOME}/.local/bin"}
 
 temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/statespace-install.XXXXXX")
@@ -32,14 +31,8 @@ archive="ssp-${target}.tar.gz"
 
 if [ -n "${STATESPACE_DOWNLOAD_ROOT:-}" ]; then
   download_root=${STATESPACE_DOWNLOAD_ROOT%/}
-elif [ "$version" = latest ]; then
-  download_root="https://github.com/${repository}/releases/latest/download"
 else
-  case "$version" in
-    v*) tag=$version ;;
-    *) tag="v${version}" ;;
-  esac
-  download_root="https://github.com/${repository}/releases/download/${tag}"
+  download_root="https://github.com/${repository}/releases/latest/download"
 fi
 
 curl -fsSL \

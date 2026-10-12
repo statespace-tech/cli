@@ -37,9 +37,9 @@ Install the Statespace CLI on macOS or Linux.
 curl -fsSL https://statespace.com/install | bash
 ```
 
-The installer downloads the latest release and verifies its SHA-256 checksum. Set
-`STATESPACE_VERSION`, such as `0.2.0`, to install another release. Pushing a `v*` tag
-publishes a release; pushes to `main` publish nothing.
+The installer downloads the latest release and verifies its SHA-256 checksum. Only the
+latest release is published. Pushing a `v*` tag publishes a release and removes the
+previous one; pushes to `main` publish nothing.
 
 ## How it works
 

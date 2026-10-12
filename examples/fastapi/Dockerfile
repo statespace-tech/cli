@@ -6,7 +6,7 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://statespace.com/install \
-       | STATESPACE_VERSION=0.2.0 STATESPACE_INSTALL_DIR=/usr/local/bin sh
+       | STATESPACE_INSTALL_DIR=/usr/local/bin sh
 
 WORKDIR /app
 COPY build.sh requirements.txt main.py ./

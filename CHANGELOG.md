@@ -30,6 +30,8 @@ the 0.1.1 model.
 - `ssp experiment erase-subject`. Use `ssp app erase-subject`.
 - Builds from `main`. The installer installs the latest release, and only release tags
   publish binaries.
+- `STATESPACE_VERSION` in the installer. Only the latest release is published; a new
+  release removes the previous one.
 
 ## 0.1.1 - 2026-10-07
 
