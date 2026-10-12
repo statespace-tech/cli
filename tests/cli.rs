@@ -92,23 +92,14 @@ impl Drop for Host {
     }
 }
 
-fn start_host(directory: &Path, variant: &Path, port: u16) -> Host {
+fn start_host(directory: &Path, port: u16, command: &str, arguments: &[String]) -> Host {
     let child = std::process::Command::new(cargo_bin("ssp"))
         .current_dir(directory)
         .env_remove("SSP_API_KEY")
         .env_remove("STATESPACE_APP")
-        .args([
-            "host",
-            "--local",
-            "--listen",
-            &format!("127.0.0.1:{port}"),
-            "--command",
-            "python3 app.py {port}",
-            "--variant-env",
-            "GREETING=hi",
-            "--variant",
-        ])
-        .arg(format!("fast={}", variant.display()))
+        .args(["host", "--local", "--listen", &format!("127.0.0.1:{port}")])
+        .args(["--command", command])
+        .args(arguments)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -133,14 +124,28 @@ fn get(port: u16, headers: &[(&str, &str)]) -> Option<(Value, Vec<String>)> {
     Some((response.json().ok()?, cookies))
 }
 
-#[test]
-fn local_hosts_route_requests_to_variants() {
-    if std::process::Command::new("python3")
+fn has_python() -> bool {
+    let found = std::process::Command::new("python3")
         .arg("--version")
         .output()
-        .is_err()
-    {
+        .is_ok();
+    if !found {
         eprintln!("skipped: python3 is not installed");
+    }
+    found
+}
+
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+#[test]
+fn local_hosts_route_requests_to_variants() {
+    if !has_python() {
         return;
     }
     let control = tempfile::tempdir().unwrap();
@@ -148,12 +153,18 @@ fn local_hosts_route_requests_to_variants() {
     for directory in [control.path(), variant.path()] {
         std::fs::copy("examples/app/app.py", directory.join("app.py")).unwrap();
     }
-    let port = TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let mut host = start_host(control.path(), variant.path(), port);
+    let port = free_port();
+    let mut host = start_host(
+        control.path(),
+        port,
+        "python3 app.py {port}",
+        &[
+            "--variant-env".into(),
+            "GREETING=hi".into(),
+            "--variant".into(),
+            format!("fast={}", variant.path().display()),
+        ],
+    );
 
     let deadline = Instant::now() + Duration::from_secs(30);
     let (body, cookies) = loop {
@@ -211,4 +222,70 @@ fn local_hosts_route_requests_to_variants() {
     // Stopping the host stops the app's processes too.
     assert!(host.stop().is_some_and(|status| status.success()));
     assert!(get(port, &[]).is_none());
+}
+
+/// Whether a process with this ID is alive.
+#[cfg(unix)]
+fn alive(pid: i32) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[cfg(unix)]
+fn read_pid(path: &Path, deadline: Instant) -> i32 {
+    loop {
+        if let Some(pid) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+        {
+            return pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} was not written",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn restarts_leave_no_workers_behind() {
+    if !has_python() {
+        return;
+    }
+    let control = tempfile::tempdir().unwrap();
+    std::fs::copy("examples/app/app.py", control.path().join("app.py")).unwrap();
+    let port = free_port();
+    // Like a server that forks workers: one outlives the process that crashes.
+    let mut host = start_host(
+        control.path(),
+        port,
+        "sleep 300 & echo $! > worker.pid; echo $$ > app.pid; exec python3 app.py {port}",
+        &[],
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let worker = read_pid(&control.path().join("worker.pid"), deadline);
+    let app = read_pid(&control.path().join("app.pid"), deadline);
+    std::fs::remove_file(control.path().join("app.pid")).unwrap();
+    // SAFETY: killing a process this test's host started.
+    unsafe {
+        libc::kill(app, libc::SIGKILL);
+    }
+    while alive(worker) {
+        assert!(
+            Instant::now() < deadline,
+            "the crashed process's worker survived"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // The host restarts the app.
+    let restarted = read_pid(&control.path().join("app.pid"), deadline);
+    assert_ne!(restarted, app);
+    while get(port, &[]).is_none() {
+        assert!(Instant::now() < deadline, "the app did not restart");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(host.stop().is_some_and(|status| status.success()));
 }

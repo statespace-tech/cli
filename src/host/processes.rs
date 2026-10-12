@@ -316,6 +316,8 @@ impl Supervisor {
                 return;
             };
             let status = status.ok();
+            // Workers that outlive their parent would keep running unsupervised.
+            kill_group(pid);
             self.update(&key, |slot| {
                 slot.state = State::Starting;
                 slot.port = None;
@@ -510,7 +512,7 @@ async fn forward(
     }
 }
 
-/// Ask the process group to stop, then kill it if it does not.
+/// Ask the process group to stop, then kill whatever is left of it.
 async fn terminate(child: &mut Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
@@ -518,18 +520,24 @@ async fn terminate(child: &mut Child) {
         unsafe {
             libc::kill(-(pid as i32), libc::SIGTERM);
         }
-        if tokio::time::timeout(STOP_TIMEOUT, child.wait())
-            .await
-            .is_ok()
-        {
-            return;
-        }
-        // SAFETY: as above.
+        let _ = tokio::time::timeout(STOP_TIMEOUT, child.wait()).await;
+        kill_group(Some(pid));
+    }
+    let _ = child.kill().await;
+}
+
+/// Kill every process left in the group that `pid` leads.
+fn kill_group(pid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(pid) = pid {
+        // SAFETY: signalling a process group that this host started. The
+        // group's ID stays reserved while any member is alive.
         unsafe {
             libc::kill(-(pid as i32), libc::SIGKILL);
         }
     }
-    let _ = child.kill().await;
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 #[cfg(unix)]
