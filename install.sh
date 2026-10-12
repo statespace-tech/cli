@@ -3,7 +3,7 @@
 set -eu
 
 repository=${STATESPACE_REPOSITORY:-statespace-tech/cli}
-version=${STATESPACE_VERSION:-main}
+version=${STATESPACE_VERSION:-latest}
 install_dir=${STATESPACE_INSTALL_DIR:-"${HOME}/.local/bin"}
 
 temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/statespace-install.XXXXXX")
@@ -32,17 +32,6 @@ archive="ssp-${target}.tar.gz"
 
 if [ -n "${STATESPACE_DOWNLOAD_ROOT:-}" ]; then
   download_root=${STATESPACE_DOWNLOAD_ROOT%/}
-elif [ "$version" = main ]; then
-  curl -fsSL "https://statespace.com/cli/latest.txt" -o "${temporary_dir}/latest"
-  commit=$(cat "${temporary_dir}/latest")
-  case "$commit" in
-    *[!a-f0-9]* | "") echo "ssp: invalid main build manifest" >&2; exit 1 ;;
-  esac
-  if [ "${#commit}" -ne 40 ]; then
-    echo "ssp: invalid main build commit" >&2
-    exit 1
-  fi
-  download_root="https://statespace.com/cli/${commit}"
 elif [ "$version" = latest ]; then
   download_root="https://github.com/${repository}/releases/latest/download"
 else
@@ -52,7 +41,6 @@ else
   esac
   download_root="https://github.com/${repository}/releases/download/${tag}"
 fi
-
 
 curl -fsSL \
   "${download_root}/${archive}" -o "${temporary_dir}/${archive}"

@@ -26,6 +26,8 @@ the 0.1.1 model.
 
 - `ssp group`, `ssp run`, and the function builders and their toolchains.
 - `ssp experiment erase-subject`. Use `ssp app erase-subject`.
+- Builds from `main`. The installer installs the latest release, and only release tags
+  publish binaries.
 
 ## 0.1.1 - 2026-10-07
 
