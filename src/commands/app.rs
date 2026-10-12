@@ -29,6 +29,9 @@ pub fn run(api: &Api, command: AppCommand) -> anyhow::Result<()> {
         AppCommand::List => print(&api.get::<Value>("/v1/apps")?),
         AppCommand::Show { name } => print(&api.get::<Value>(&path(&name))?),
         AppCommand::Hosts { name } => print(&api.get::<Value>(&format!("{}/hosts", path(&name)))?),
+        AppCommand::Outcomes { name } => {
+            print(&api.get::<Value>(&format!("{}/outcomes", path(&name)))?)
+        }
         AppCommand::EraseSubject { name, subject } => {
             let erased: Value = api.send(
                 Method::DELETE,

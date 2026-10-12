@@ -20,6 +20,7 @@ with status 1.
 
    ```shell
    ssp experiment list --app <app>
+   ssp app outcomes <app>
    ssp experiment results <experiment> --outcome <outcome>
    psql "$DATABASE_URL" -c "SELECT * FROM <app>.notes ORDER BY timestamp DESC LIMIT 20"
    ```
@@ -73,6 +74,9 @@ with status 1.
   database schema in a variant; land migrations in the deployed code first.
 - Never raise traffic without reading `results`. An `effect` interval that includes 0 is
   not evidence of a difference.
+- If `results` reports `sample_ratio.mismatch`, subjects did not split as the weights
+  say, so the effects cannot be trusted. Check `unavailable` and `ssp variant logs` for a
+  variant that fails, and fix it before reading outcomes.
 - Check `ssp variant logs` and the `metrics` view for errors and latency before trusting
   outcomes. A failing variant sends its subjects to control.
 - `ssp experiment start` fails when the app's other experiments already hold the traffic

@@ -89,6 +89,8 @@ pub enum AppCommand {
     Show { name: String },
     /// List the hosts that recently reported for an app.
     Hosts { name: String },
+    /// List the outcome names an app recorded in the last 30 days.
+    Outcomes { name: String },
     /// Erase one subject's runs, outcomes, and requests in an app.
     EraseSubject { name: String, subject: String },
     /// Delete an app with its variants, experiments, and events.
