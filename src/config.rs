@@ -1,4 +1,4 @@
-//! The saved session, shared with the SDKs for local development.
+//! The saved session from `ssp login`.
 
 use std::{fs, path::PathBuf};
 

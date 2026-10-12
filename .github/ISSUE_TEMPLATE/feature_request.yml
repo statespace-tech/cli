@@ -14,7 +14,7 @@ body:
     id: interface
     attributes:
       label: Proposed interface
-      description: Show the proposed CLI, SDK, HTTP, or data interface.
+      description: Show the proposed CLI, `ssp host`, HTTP, or data interface.
     validations:
       required: true
   - type: textarea

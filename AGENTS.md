@@ -13,7 +13,7 @@ and its variants behind a proxy that assigns subjects and sends events.
 - Keep `src/signing.rs` byte-for-byte compatible with the backend's signed message.
 - `ssp host` must never block or slow the app: drop events rather than wait, and send a
   subject to control rather than fail its request.
-- Assign subjects with the same bucket function as every other Statespace client.
+- Never change the bucket function: it would move subjects of running experiments.
 
 ## Checks
 

@@ -394,8 +394,8 @@ mod tests {
     }
 
     #[test]
-    fn buckets_match_the_other_clients() {
-        // The value the Python, TypeScript, and Go SDKs compute for this pair.
+    fn buckets_are_stable() {
+        // Changing this value would move subjects of running experiments.
         assert_eq!(bucket("salt", "u_42"), 0.2531303365722227);
     }
 
