@@ -198,6 +198,10 @@ ssp host --local --command "python3 app.py {port}" --variant feature-x=../featur
 curl -H 'x-statespace-variant: feature-x' localhost:8080
 ```
 
+[`examples/fastapi`](examples/fastapi) is a complete app: a FastAPI shop with a GitHub
+Actions workflow that publishes each branch as a variant, a Dockerfile, and a systemd
+service.
+
 ## Data
 
 Every app has a PostgreSQL schema of views: `logs`, `runs`, `outcomes`, `requests`,
@@ -223,9 +227,10 @@ Create a key for `ssp host`. It can read configurations and send events.
 ssp key create --name production --preset runtime
 ```
 
-Create a key for an agent or CI job that manages variants and experiments.
+Create a key for CI that publishes variants, or for an agent that also runs experiments.
 
 ```shell
+ssp key create --name ci --scope experiments:write
 ssp key create --name agent --preset admin --expires-in-days 30
 ```
 

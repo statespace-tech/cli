@@ -1,0 +1,41 @@
+# Publish every branch as a variant of the shop. Copy this file to
+# .github/workflows/variant.yml in the app's repository.
+#
+# Secrets:
+#   SSP_API_KEY      ssp key create --name ci --scope experiments:write
+#   SSP_SIGNING_KEY  the private key from `ssp variant keygen`; hosts trust
+#                    its public key with --trust-key
+#
+# The variant must run on the hosts, so build it in the image they run: here
+# the same python:3.12-slim image as the Dockerfile.
+name: Publish variant
+
+on:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  variant:
+    runs-on: ubuntu-24.04
+    container: python:3.12-slim
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the branch like production
+        run: ./build.sh build
+      - name: Install ssp
+        run: |
+          apt-get update && apt-get install --yes --no-install-recommends curl ca-certificates
+          curl -fsSL https://statespace.com/install | STATESPACE_VERSION=0.2.0 sh
+      - name: Sign and upload the variant
+        env:
+          SSP_API_KEY: ${{ secrets.SSP_API_KEY }}
+          SSP_SIGNING_KEY: ${{ secrets.SSP_SIGNING_KEY }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          # Variant names use letters, numbers, dots, dashes, and underscores.
+          name=$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-' | cut -c 1-100)
+          ~/.local/bin/ssp variant create "$name" build --app shop --commit "$GITHUB_SHA" \
+            --command "PYTHONPATH=deps exec python3 -m uvicorn main:app --host 127.0.0.1 --port {port} --workers 2"

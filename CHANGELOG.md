@@ -21,6 +21,7 @@ the 0.1.1 model.
   experiments of an app hold disjoint shares of its subjects.
 - `ssp database credential create --app` limits a credential to one app.
 - `ssp app erase-subject` erases a subject's data in an app.
+- `examples/fastapi`: a FastAPI app with a CI workflow, a Dockerfile, and a systemd service.
 
 ### Removed
 
