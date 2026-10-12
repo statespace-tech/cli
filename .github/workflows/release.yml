@@ -8,7 +8,42 @@ permissions:
   contents: read
 
 jobs:
+  main:
+    name: Require a commit on main that passed CI
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the tagged commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          git merge-base --is-ancestor "$COMMIT" origin/main || {
+            echo "::error::$GITHUB_REF_NAME is not on main."; exit 1;
+          }
+          # Wait for CI when the tag follows the push closely.
+          for _ in $(seq 60); do
+            read -r status conclusion < <(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow CI --branch main --event push --commit "$COMMIT" \
+              --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' || true)
+            if [[ "$status" == completed ]]; then
+              [[ "$conclusion" == success ]] && exit 0
+              echo "::error::CI for $COMMIT concluded $conclusion."; exit 1
+            fi
+            sleep 20
+          done
+          echo "::error::No completed CI run on main for $COMMIT."
+          exit 1
+
   check:
+    needs: main
     uses: ./.github/workflows/ci.yml
 
   cli:
