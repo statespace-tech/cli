@@ -28,7 +28,7 @@ jobs:
       - name: Install ssp
         run: |
           apt-get update && apt-get install --yes --no-install-recommends curl ca-certificates
-          curl -fsSL https://statespace.com/install | sh
+          curl -fsSL https://statespace.com/install.sh | sh
       - name: Sign and upload the variant
         env:
           SSP_API_KEY: ${{ secrets.SSP_API_KEY }}

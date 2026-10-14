@@ -34,7 +34,7 @@ measure what it does to the outcomes you care about.
 Install the Statespace CLI on macOS or Linux.
 
 ```shell
-curl -fsSL https://statespace.com/install | bash
+curl -fsSL https://statespace.com/install.sh | bash
 ```
 
 The installer downloads the latest release and verifies its SHA-256 checksum. Only the

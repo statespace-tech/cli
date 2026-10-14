@@ -5,7 +5,7 @@ FROM python:3.12-slim
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL https://statespace.com/install \
+    && curl -fsSL https://statespace.com/install.sh \
        | STATESPACE_INSTALL_DIR=/usr/local/bin sh
 
 WORKDIR /app
