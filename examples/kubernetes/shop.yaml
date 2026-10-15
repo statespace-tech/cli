@@ -1,0 +1,58 @@
+# The shop's Deployment and Service, with `ssp proxy` beside the shop in each
+# pod. The Service sends requests to the proxy's port, 8080; the proxy
+# forwards them to the shop on localhost, or to the arm that serves the
+# subject. Two changes make an existing Deployment ready: the
+# statespace-proxy container, and the Service's targetPort.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: shop
+  template:
+    metadata:
+      labels:
+        app: shop
+    spec:
+      containers:
+        - name: shop
+          image: ghcr.io/acme/shop:main
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+          envFrom:
+            - secretRef:
+                name: shop
+        - name: statespace-proxy
+          image: ghcr.io/statespace-tech/ssp:0.2.0
+          args: ["proxy", "--runtime", "kubernetes", "--default", "http://localhost:8000"]
+          env:
+            - name: STATESPACE_APP
+              value: shop
+            - name: SSP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: statespace
+                  key: runtime-token
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shop
+spec:
+  selector:
+    app: shop
+  ports:
+    - port: 80
+      targetPort: 8080

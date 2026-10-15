@@ -1,13 +1,10 @@
-# Publish every branch as a variant of the shop. Copy this file to
+# Publish every branch of the shop as a variant. Copy this file to
 # .github/workflows/variant.yml in the app's repository.
 #
 # Secrets:
-#   SSP_API_KEY      ssp key create --name ci --scope experiments:write
-#   SSP_SIGNING_KEY  the private key from `ssp variant keygen`; hosts trust
-#                    its public key with --trust-key
-#
-# The variant must run on the hosts, so build it in the image they run: here
-# the same python:3.12-slim image as the Dockerfile.
+#   SSP_TOKEN        ssp token create --name ci --preset publisher
+#   SSP_SIGNING_KEY  the private key from `ssp keygen`; proxies and controllers
+#                    trust its public key with --trust-key
 name: Publish variant
 
 on:
@@ -16,26 +13,28 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   variant:
     runs-on: ubuntu-24.04
-    container: python:3.12-slim
     steps:
       - uses: actions/checkout@v4
-      - name: Build the branch like production
-        run: ./build.sh build
-      - name: Install ssp
+      - name: Build and push the branch's image
         run: |
-          apt-get update && apt-get install --yes --no-install-recommends curl ca-certificates
-          curl -fsSL https://statespace.com/install.sh | sh
-      - name: Sign and upload the variant
+          image=ghcr.io/${GITHUB_REPOSITORY,,}:$GITHUB_SHA
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build --tag "$image" .
+          docker push "$image"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+      - name: Install ssp
+        run: curl -fsSL https://statespace.com/install.sh | sh
+      - name: Sign and publish the variant
         env:
-          SSP_API_KEY: ${{ secrets.SSP_API_KEY }}
+          SSP_TOKEN: ${{ secrets.SSP_TOKEN }}
           SSP_SIGNING_KEY: ${{ secrets.SSP_SIGNING_KEY }}
           BRANCH: ${{ github.ref_name }}
         run: |
           # Variant names use letters, numbers, dots, dashes, and underscores.
           name=$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-' | cut -c 1-100)
-          ~/.local/bin/ssp variant create "$name" build --app shop --commit "$GITHUB_SHA" \
-            --command "PYTHONPATH=deps exec python3 -m uvicorn main:app --host 127.0.0.1 --port {port} --workers 2"
+          ~/.local/bin/ssp variant create "$name" --app shop --image "$IMAGE"

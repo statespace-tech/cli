@@ -1,71 +1,69 @@
 # FastAPI shop
 
-A small FastAPI shop that runs behind `ssp host`. It prints a `signup` outcome for each
-signup and a `purchase` outcome, with its `amount`, for each order. A variant is a branch
-of `main.py`, such as one that lowers `PRICE`.
+A small FastAPI shop that runs behind `ssp proxy`. It prints a JSON line for each
+signup and purchase, with the subject and the amount. A variant is a branch of
+`main.py`, such as one that lowers `PRICE`, built into an image.
 
 | File | Purpose |
 | --- | --- |
 | `main.py` | The app. It reads the subject from the `x-statespace-subject` header |
-| `build.sh` | Builds a ready-to-run copy: the code and its dependencies in `deps/` |
-| `variant.yml` | A GitHub Actions workflow that publishes each branch as a variant |
-| `Dockerfile` | A production image that starts the shop with `ssp host` |
-| `ssp-host.service` | The same, as a systemd service |
+| `Dockerfile` | The shop's image: the default from `main`, each variant from a branch |
+| `variant.yml` | A GitHub Actions workflow that publishes each branch's image as a variant |
+| `ssp-proxy.service` | `ssp proxy` under systemd, on a machine with Docker |
 
-## Try it locally
-
-Build control and a variant, and choose the variant per request with a header.
-
-```shell
-./build.sh /tmp/shop && cp -R /tmp/shop /tmp/cheaper
-sed -i.bak 's/^PRICE = 40/PRICE = 35/' /tmp/cheaper/main.py
-cd /tmp/shop && ssp host --local --health /health --variant cheaper=/tmp/cheaper \
-  --command "PYTHONPATH=deps exec python3 -m uvicorn main:app --host 127.0.0.1 --port {port} --workers 2"
-curl -H 'x-statespace-variant: cheaper' localhost:8080/
-```
+For Kubernetes, see `../kubernetes`.
 
 ## Run an experiment
 
-Create the app, a signing key, and a key for CI. Store the signing key and the CI key as
-the repository secrets `SSP_SIGNING_KEY` and `SSP_API_KEY`, and copy `variant.yml` to
-`.github/workflows/`.
+Create the app, a signing key, and a token for CI. Store the signing key and the
+CI token as the repository secrets `SSP_SIGNING_KEY` and `SSP_TOKEN`, and copy
+`variant.yml` to `.github/workflows/`.
 
 ```shell
 ssp app create shop
-ssp variant keygen
-ssp key create --name ci --scope experiments:write
+ssp keygen
+ssp token create --name ci --preset publisher
 ```
 
-Each push to a branch now publishes it as a variant named after the branch. Start an
-experiment with one.
+Each push to a branch now builds its image, pushes it to GitHub's registry, and
+publishes it as a variant named after the branch. Start an experiment with one:
+5% of the shop's subjects get the lower price and 5% the control arm.
 
 ```shell
-ssp experiment create price --app shop --variant lower-price=0.5 --traffic 0.1 \
+ssp experiment create price --app shop --split lower-price=0.05 \
   --note "A lower price should raise revenue per visitor."
 ssp experiment start price
-ssp experiment results price --outcome purchase --metric amount
 ```
+
+Compare revenue per subject in SQL, with a token from `ssp token create --name
+sql --preset analyst --app shop`:
+
+```sql
+SELECT variant, count(DISTINCT subject_id) AS subjects,
+       sum((data->>'amount')::numeric) / count(DISTINCT subject_id) AS revenue_per_subject
+FROM shop.logs
+WHERE experiment = 'price' AND reason = 'assigned'
+GROUP BY variant;
+```
+
+`shop.logs` has one row per subject's run with each line the subject's arm
+printed after it, so subjects without a purchase count with no revenue.
 
 ## Deploy
 
-Run the image, or the systemd service, wherever the shop runs now. Give it a runtime key
-from `ssp key create --name production --preset runtime` as `SSP_API_KEY`, and the public
-signing key as `SSP_TRUST_KEY`.
+Install `ssp-proxy.service` wherever the shop runs now, with Docker. Give it a
+runtime token from `ssp token create --name production --preset runtime` as
+`SSP_TOKEN`, and the public signing key as `SSP_TRUST_KEY`. The proxy runs the
+image in `/etc/shop/image` as the default, and each arm of a running experiment
+beside it. The containers inherit the service's environment, such as
+`PAYMENT_KEY` from `/etc/shop/env`.
 
-```shell
-docker build -t shop .
-docker run -p 8080:8080 -e SSP_API_KEY -e SSP_TRUST_KEY shop
-```
+To deploy a new default, write its image to `/etc/shop/image` and run `systemctl
+reload shop`. The proxy starts the new image, sends it traffic once `/health`
+answers, and then stops the old container.
 
-Variants run inside the same image, so CI builds them in `python:3.12-slim` too. When you
-change the base image, change it in `variant.yml` as well.
-
-Behind a load balancer, run as many hosts as before. Every host assigns a subject the
-same variant, so requests need no stickiness. Point health checks at `/health`: control
-answers them, so they pass while variants start. On deploys, the platform's `SIGTERM`
-lets in-flight requests finish for up to 10 seconds; allow at least that long before it
-kills the container.
-
-Each host runs control and up to `--max-variants` variants, 4 by default. Size machines for
-that many copies of the app, or lower the limit; `ssp experiment start` refuses an
-experiment that hosts have no room to run.
+Behind a load balancer, run as many machines as before. Every proxy assigns a
+subject the same arm, so requests need no stickiness. Each proxy runs the
+default and up to `--max-variants` arms, 4 by default, control arms included.
+Size machines for that many copies of the shop, or lower the limit; `ssp
+experiment start` warns when an experiment needs more arms than proxies run.

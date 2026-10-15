@@ -1,0 +1,40 @@
+# Run the shop behind `ssp proxy` on a machine with Docker. The proxy runs the
+# shop's default image and every arm as containers, and listens on port 8080.
+#
+#   sudo install -d /etc/shop
+#   echo ghcr.io/acme/shop:main | sudo tee /etc/shop/image
+#   sudo tee /etc/shop/env <<<'PAYMENT_KEY=...'      # the shop's own settings
+#   sudo systemctl edit shop     # add Environment=SSP_TOKEN=... and SSP_TRUST_KEY=...
+#   sudo cp ssp-proxy.service /etc/systemd/system/shop.service
+#   sudo systemctl enable --now shop
+#
+# To deploy a new default, write its image to /etc/shop/image and run
+# `sudo systemctl reload shop`: the proxy starts it, switches traffic once it
+# is ready, and stops the old container.
+[Unit]
+Description=Shop behind ssp proxy
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+User=shop
+SupplementaryGroups=docker
+# Containers inherit this environment, without the proxy's own settings.
+EnvironmentFile=/etc/shop/env
+Environment=STATESPACE_APP=shop
+Environment=STATESPACE_RUNTIME=docker
+Environment=STATESPACE_IMAGE_FILE=/etc/shop/image
+Environment=STATESPACE_LISTEN=0.0.0.0:8080
+StateDirectory=statespace
+Environment=STATESPACE_STATE=%S/statespace
+ExecStart=/usr/local/bin/ssp proxy --health /health --redact sk_live_\\w+
+ExecReload=/bin/kill -HUP $MAINPID
+# ssp proxy stops every container it started; give requests time to finish.
+KillMode=mixed
+TimeoutStopSec=60
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

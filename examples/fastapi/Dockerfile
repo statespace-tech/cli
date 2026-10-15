@@ -1,23 +1,13 @@
-# The shop's production image. `ssp host` replaces the start command: it runs
-# this code as control, and the variants of running experiments beside it.
+# The shop's image. The default and every variant are images built from this
+# file: the default from main, each variant from a branch.
 FROM python:3.12-slim
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL https://statespace.com/install.sh \
-       | STATESPACE_INSTALL_DIR=/usr/local/bin sh
-
 WORKDIR /app
-COPY build.sh requirements.txt main.py ./
-RUN ./build.sh /app/build && useradd --system --create-home shop \
-    && mkdir -p /var/cache/statespace && chown shop /var/cache/statespace
-WORKDIR /app/build
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --requirement requirements.txt \
+    && useradd --system --no-create-home shop
+COPY main.py ./
 USER shop
 
-# SSP_API_KEY (a runtime key) and SSP_TRUST_KEY come from the platform's secrets.
-ENV STATESPACE_APP=shop STATESPACE_CACHE=/var/cache/statespace STATESPACE_LISTEN=0.0.0.0:8080
-EXPOSE 8080
-CMD exec ssp host --health /health --trust-key "$SSP_TRUST_KEY" \
-    --command "PYTHONPATH=deps exec python3 -m uvicorn main:app --host 127.0.0.1 --port {port} --workers 2" \
-    --capture stderr --redact 'sk_live_\w+'
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

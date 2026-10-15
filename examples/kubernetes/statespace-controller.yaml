@@ -1,0 +1,75 @@
+# `ssp controller` for the shop: one pod that runs each arm as a copy of the
+# shop's Deployment with the arm's image. It may change Deployments,
+# Services, and its ConfigMap in this namespace only, and read pods and their
+# logs. Deleting its Deployment deletes every arm it made.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: statespace-controller
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: statespace-controller
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["services", "configmaps"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: statespace-controller
+subjects:
+  - kind: ServiceAccount
+    name: statespace-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: statespace-controller
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: statespace-controller
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: statespace-controller
+  template:
+    metadata:
+      labels:
+        app: statespace-controller
+    spec:
+      serviceAccountName: statespace-controller
+      containers:
+        - name: controller
+          image: ghcr.io/statespace-tech/ssp:0.2.0
+          args: ["controller"]
+          env:
+            - name: STATESPACE_APP
+              value: shop
+            - name: STATESPACE_DEPLOYMENT
+              value: shop
+            # The controller's own Deployment, which owns every arm.
+            - name: STATESPACE_CONTROLLER
+              value: statespace-controller
+            - name: SSP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: statespace
+                  key: controller-token
+            - name: SSP_TRUST_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: statespace
+                  key: trust-key

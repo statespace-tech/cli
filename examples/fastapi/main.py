@@ -1,8 +1,9 @@
 """A small shop for trying Statespace with FastAPI.
 
-Run it behind `ssp host`. It reads the subject from the `x-statespace-subject`
-header and prints an outcome line for each signup and purchase. A variant is a
-branch of this file, built and signed in CI.
+Run it behind `ssp proxy`. It reads the subject from the `x-statespace-subject`
+header and prints a JSON line for each signup and purchase; Statespace records
+every line the arms print. A variant is a branch of this file, built into an
+image and signed in CI.
 """
 
 import json
@@ -20,10 +21,9 @@ log = logging.getLogger("shop")
 app = FastAPI()
 
 
-def outcome(name: str, subject: str | None, **data: object) -> None:
-    """Report an outcome to Statespace by printing one JSON line."""
-    if subject:
-        print(json.dumps({"statespace": name, "subject": subject, **data}), flush=True)
+def event(name: str, subject: str | None, **data: object) -> None:
+    """Print one JSON line. Its `subject` ties it to the subject's arm in SQL."""
+    print(json.dumps({"event": name, "subject": subject, **data}), flush=True)
 
 
 class Signup(BaseModel):
@@ -41,13 +41,13 @@ def health() -> dict[str, str]:
 
 @app.get("/")
 def home() -> dict[str, object]:
-    return {"variant": os.environ.get("STATESPACE_VARIANT", "control"), "price": PRICE}
+    return {"variant": os.environ.get("STATESPACE_VARIANT", "default"), "price": PRICE}
 
 
 @app.post("/signup")
 def signup(body: Signup, subject: str | None = Header(None, alias="x-statespace-subject")):
     log.info("signup for %s", body.email)
-    outcome("signup", subject)
+    event("signup", subject)
     return {"welcome": body.email}
 
 
@@ -56,7 +56,7 @@ def checkout(body: Order, subject: str | None = Header(None, alias="x-statespace
     if body.quantity < 1:
         raise HTTPException(422, "quantity must be at least 1")
     amount = PRICE * body.quantity
-    # Logs can hold secrets. `ssp host --redact` removes them before they leave the machine.
+    # Logs can hold secrets. `ssp proxy --redact` removes them before they leave the machine.
     log.info("charged %s with key %s", amount, os.environ.get("PAYMENT_KEY", "sk_test_local"))
-    outcome("purchase", subject, amount=amount, quantity=body.quantity)
+    event("purchase", subject, amount=amount, quantity=body.quantity)
     return {"amount": amount}
