@@ -1,5 +1,5 @@
-"""A tiny app for trying `ssp host`: it says which variant served the
-request, and prints a `visit` outcome for every subject it serves."""
+"""A tiny app for trying `ssp proxy`: it says which arm served the request,
+and prints a JSON line for every subject it serves."""
 
 import json
 import os
@@ -12,13 +12,15 @@ class Handler(BaseHTTPRequestHandler):
         subject = self.headers.get("x-statespace-subject")
         body = json.dumps(
             {
-                "variant": os.environ.get("STATESPACE_VARIANT"),
+                # The proxy names what serves the request: default, control, or a variant.
+                "variant": self.headers.get("x-statespace-variant"),
                 "subject": subject,
                 "greeting": os.environ.get("GREETING", "hello"),
+                "shared": os.environ.get("SHARED"),
             }
         ).encode()
         if subject:
-            print(json.dumps({"statespace": "visit", "subject": subject, "path": self.path}), flush=True)
+            print(json.dumps({"event": "visit", "subject": subject, "path": self.path}), flush=True)
         self.send_response(200)
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
@@ -29,4 +31,5 @@ class Handler(BaseHTTPRequestHandler):
         print(f"{self.command} {self.path}", file=sys.stderr, flush=True)
 
 
-ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+port = int(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("PORT", "8000"))
+ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()

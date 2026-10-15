@@ -43,13 +43,26 @@ pub fn login(api: &Api, no_open: bool) -> anyhow::Result<()> {
     print(&json!({ "status": "signed_in", "account": account }))
 }
 
-pub fn logout(api: &Api) -> anyhow::Result<()> {
+/// Sign this terminal out, or every session of the account with `all`. The
+/// saved session is forgotten even when Statespace cannot be reached.
+pub fn logout(api: &Api, all: bool) -> anyhow::Result<()> {
+    let ended = match api.token() {
+        Some(_) if all => api
+            .send::<Value>(
+                Method::POST,
+                "/v1/tokens/revoke-all",
+                &json!({ "kind": "session" }),
+            )
+            .map(|response| response["revoked"].clone()),
+        Some(_) => api.delete("/v1/auth/session").map(|()| json!(1)),
+        None => Ok(json!(0)),
+    };
     Settings {
         endpoint: Some(api.endpoint().into()),
         token: None,
     }
     .save()?;
-    print(&json!({ "status": "signed_out" }))
+    print(&json!({ "status": "signed_out", "sessions_ended": ended? }))
 }
 
 fn wait_for_approval(api: &Api, login: &DeviceLogin) -> anyhow::Result<String> {

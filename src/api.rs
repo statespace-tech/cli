@@ -55,7 +55,7 @@ impl Api {
         let token = self
             .token
             .as_deref()
-            .context("not signed in; run `ssp login` or set SSP_API_KEY")?;
+            .context("not signed in; run `ssp login` or set SSP_TOKEN")?;
         Ok(self.anonymous(method, path).bearer_auth(token))
     }
 
@@ -89,7 +89,7 @@ fn check(response: Response) -> anyhow::Result<Response> {
         return Ok(response);
     }
     if status == StatusCode::UNAUTHORIZED {
-        bail!("the credential is invalid or expired; run `ssp login` or set SSP_API_KEY");
+        bail!("the credential is invalid or expired; run `ssp login` or set SSP_TOKEN");
     }
     let body = response.text().unwrap_or_default();
     let message = serde_json::from_str::<Value>(&body)

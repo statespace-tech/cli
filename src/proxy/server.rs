@@ -1,12 +1,13 @@
 //! The public listener: assign each request, then forward it to the
-//! process that serves its subject.
+//! default or to the arm that serves its subject.
 
 use std::{
+    collections::HashMap,
     convert::Infallible,
     net::SocketAddr,
     pin::Pin,
     sync::{
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
         atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
@@ -24,38 +25,81 @@ use hyper_util::{
 use serde_json::json;
 
 use super::{
-    assign::{self, Decision, Key, Routing, SUBJECT_COOKIE},
-    processes::Supervisor,
+    assign::{self, Decision, Key, Routing, SUBJECT_COOKIE, Target},
+    docker::Supervisor,
     telemetry::{self, Telemetry},
 };
 
 type ProxyBody = BoxBody<Bytes, hyper::Error>;
 
-/// The routing a host has, and when it last heard from Statespace.
+/// How long a remote arm that failed a request gets no traffic.
+const SUSPECT_FOR: Duration = Duration::from_secs(10);
+
+/// The routing a proxy has, and when it last heard from Statespace.
 pub struct Current {
     pub routing: Routing,
     pub fetched: Option<Instant>,
 }
 
+/// Where the default and the arms take traffic.
+pub enum Upstreams {
+    /// Containers this proxy runs.
+    Docker(Supervisor),
+    /// The default beside the proxy, and arms a controller runs elsewhere.
+    Kubernetes {
+        default: String,
+        arms: RwLock<HashMap<Key, String>>,
+        suspects: Mutex<HashMap<Key, Instant>>,
+    },
+}
+
+impl Upstreams {
+    pub fn address(&self, target: &Target) -> Option<String> {
+        match (self, target) {
+            (Self::Docker(supervisor), target) => supervisor.address(target),
+            (Self::Kubernetes { default, .. }, Target::Default) => Some(default.clone()),
+            (Self::Kubernetes { arms, suspects, .. }, Target::Arm(key)) => {
+                let suspected = suspects
+                    .lock()
+                    .expect("suspects are never poisoned")
+                    .get(key)
+                    .is_some_and(|since| since.elapsed() < SUSPECT_FOR);
+                if suspected {
+                    return None;
+                }
+                arms.read()
+                    .expect("arms are never poisoned")
+                    .get(key)
+                    .cloned()
+            }
+        }
+    }
+
+    pub fn suspect(&self, target: &Target) {
+        match (self, target) {
+            (Self::Docker(supervisor), target) => supervisor.suspect(target),
+            (Self::Kubernetes { suspects, .. }, Target::Arm(key)) => {
+                suspects
+                    .lock()
+                    .expect("suspects are never poisoned")
+                    .insert(key.clone(), Instant::now());
+            }
+            (Self::Kubernetes { .. }, Target::Default) => {}
+        }
+    }
+}
+
 pub struct Shared {
     pub current: RwLock<Current>,
-    pub supervisor: Supervisor,
+    pub upstreams: Upstreams,
     pub telemetry: Arc<Telemetry>,
-    pub local: bool,
-    pub capture_http: bool,
     pub stale_after: Duration,
     pub in_flight: AtomicUsize,
     client: Client<HttpConnector, ProxyBody>,
 }
 
 impl Shared {
-    pub fn new(
-        supervisor: Supervisor,
-        telemetry: Arc<Telemetry>,
-        local: bool,
-        capture_http: bool,
-        stale_after: Duration,
-    ) -> Self {
+    pub fn new(upstreams: Upstreams, telemetry: Arc<Telemetry>, stale_after: Duration) -> Self {
         let mut connector = HttpConnector::new();
         connector.set_nodelay(true);
         Self {
@@ -63,10 +107,8 @@ impl Shared {
                 routing: Routing::default(),
                 fetched: None,
             }),
-            supervisor,
+            upstreams,
             telemetry,
-            local,
-            capture_http,
             stale_after,
             in_flight: AtomicUsize::new(0),
             client: Client::builder(TokioExecutor::new())
@@ -75,34 +117,21 @@ impl Shared {
         }
     }
 
-    /// Decide who serves a request. A host without a recent configuration
-    /// serves every subject with control.
-    fn decide(&self, request: &serde_json::Value, headers: &HeaderMap) -> Decision {
-        if self.local {
-            let chosen = headers
-                .get("x-statespace-variant")
-                .and_then(|value| value.to_str().ok())
-                .map(|name| Key {
-                    name: name.to_owned(),
-                    version: None,
-                });
-            return Decision {
-                serve: chosen.unwrap_or_else(Key::control),
-                assignment: None,
-            };
-        }
+    /// Decide who serves a request. A proxy without a recent configuration
+    /// sends every subject to the default.
+    fn decide(&self, request: &serde_json::Value) -> Decision {
         let current = self.current.read().expect("routing is never poisoned");
         let fresh = current
             .fetched
             .is_some_and(|fetched| fetched.elapsed() <= self.stale_after);
         if !fresh {
             return Decision {
-                serve: Key::control(),
+                serve: Target::Default,
                 assignment: None,
             };
         }
         assign::decide(&current.routing, request, |key| {
-            self.supervisor.port(key).is_some()
+            self.upstreams.address(&Target::Arm(key.clone())).is_some()
         })
     }
 }
@@ -169,14 +198,14 @@ async fn forward(
         request.headers(),
         &cookies,
     );
-    let decision = shared.decide(&view, request.headers());
+    let decision = shared.decide(&view);
     if let Some(assignment) = &decision.assignment {
         shared.telemetry.run(assignment, method.as_str(), &path);
     }
     let mut serve = decision.serve.clone();
-    let Some(port) = shared.supervisor.port(&serve).or_else(|| {
-        serve = Key::control();
-        shared.supervisor.port(&serve)
+    let Some(address) = shared.upstreams.address(&serve).or_else(|| {
+        serve = Target::Default;
+        shared.upstreams.address(&serve)
     }) else {
         return text(StatusCode::SERVICE_UNAVAILABLE, "the app is starting");
     };
@@ -201,34 +230,34 @@ async fn forward(
     });
     let client_upgrade = upgrade.then(|| hyper::upgrade::on(&mut request));
     let (mut parts, body) = request.into_parts();
-    parts.uri = upstream_uri(port, &parts.uri);
-    // Clients may speak HTTP/2; processes are reached over HTTP/1.1.
+    parts.uri = upstream_uri(&address, &parts.uri);
+    // Clients may speak HTTP/2; the app is reached over HTTP/1.1.
     parts.version = http::Version::HTTP_11;
     let upstream = Request::from_parts(parts, body.boxed());
 
     let mut response = match shared.client.request(upstream).await {
         Ok(response) => response,
         Err(error) => {
-            shared.supervisor.suspect(&serve);
+            shared.upstreams.suspect(&serve);
             let fallback = retry
-                .filter(|_| !serve.is_control())
-                .and_then(|retry| Some((retry, shared.supervisor.port(&Key::control())?)));
-            let Some(((method, uri, headers), control_port)) = fallback else {
-                eprintln!("[ssp] {} did not answer: {error}", serve.name);
+                .filter(|_| serve != Target::Default)
+                .and_then(|retry| Some((retry, shared.upstreams.address(&Target::Default)?)));
+            let Some(((method, uri, headers), default)) = fallback else {
+                eprintln!("[ssp] {serve} did not answer: {error}");
                 return text(StatusCode::BAD_GATEWAY, "the app did not answer");
             };
-            serve = Key::control();
+            serve = Target::Default;
             let mut again = Request::new(Empty::new().map_err(|never| match never {}).boxed());
             *again.method_mut() = method;
-            *again.uri_mut() = upstream_uri(control_port, &uri);
+            *again.uri_mut() = upstream_uri(&default, &uri);
             *again.headers_mut() = headers;
             again
                 .headers_mut()
-                .insert("x-statespace-variant", HeaderValue::from_static("control"));
+                .insert("x-statespace-variant", HeaderValue::from_static("default"));
             match shared.client.request(again).await {
                 Ok(response) => response,
                 Err(error) => {
-                    eprintln!("[ssp] control did not answer: {error}");
+                    eprintln!("[ssp] the default did not answer: {error}");
                     return text(StatusCode::BAD_GATEWAY, "the app did not answer");
                 }
             }
@@ -250,9 +279,11 @@ async fn forward(
                 }
             });
         }
-        shared
-            .telemetry
-            .record_http(&serve, status.as_u16(), first_byte_ms);
+        if let Target::Arm(key) = &serve {
+            shared
+                .telemetry
+                .record_http(key, status.as_u16(), first_byte_ms);
+        }
         let (parts, _) = response.into_parts();
         return Response::from_parts(parts, Empty::new().map_err(|never| match never {}).boxed());
     }
@@ -270,30 +301,30 @@ async fn forward(
         }
     }
     let telemetry = shared.telemetry.clone();
-    let capture = shared.capture_http;
-    let assignment = decision.assignment;
     let request_bytes = view["headers"]["content-length"]
         .as_str()
         .and_then(|length| length.parse::<i64>().ok());
+    // Only arms are recorded; the default is the app as it always runs.
     let finish = Box::new(move |response_bytes: u64| {
+        let Target::Arm(key) = serve else {
+            return;
+        };
         let duration_ms = started.elapsed().as_secs_f64() * 1000.0;
-        telemetry.record_http(&serve, status.as_u16(), duration_ms);
-        if capture {
-            telemetry.request(json!({
-                "subject_id": subject,
-                "experiment": assignment.as_ref().map(|assignment| &assignment.experiment),
-                "experiment_version": assignment.as_ref().map(|assignment| assignment.version),
-                "variant": serve.name,
-                "variant_version": serve.version,
-                "method": method.as_str(),
-                "path": path,
-                "status": status.as_u16(),
-                "duration_ms": duration_ms,
-                "first_byte_ms": first_byte_ms,
-                "request_bytes": request_bytes,
-                "response_bytes": response_bytes,
-            }));
-        }
+        telemetry.record_http(&key, status.as_u16(), duration_ms);
+        telemetry.request(json!({
+            "subject_id": subject,
+            "experiment": key.experiment,
+            "experiment_version": key.experiment_version,
+            "variant": key.arm,
+            "variant_version": key.version,
+            "method": method.as_str(),
+            "path": path,
+            "status": status.as_u16(),
+            "duration_ms": duration_ms,
+            "first_byte_ms": first_byte_ms,
+            "request_bytes": request_bytes,
+            "response_bytes": response_bytes,
+        }));
     });
     Response::from_parts(
         parts,
@@ -306,12 +337,12 @@ async fn forward(
     )
 }
 
-/// Point the request at a process and tell it who the subject is. Clients
-/// cannot set Statespace headers themselves.
+/// Tell the app who the subject is and what serves it. Clients cannot set
+/// Statespace headers themselves.
 fn prepare_headers(
     request: &mut Request<Incoming>,
     peer: SocketAddr,
-    serve: &Key,
+    serve: &Target,
     subject: Option<&str>,
     decision: &Decision,
 ) {
@@ -350,7 +381,13 @@ fn prepare_headers(
         }
     };
     set("x-forwarded-for", &forwarded);
-    set("x-statespace-variant", &serve.name);
+    set(
+        "x-statespace-variant",
+        match serve {
+            Target::Default => "default",
+            Target::Arm(key) => &key.arm,
+        },
+    );
     if let Some(subject) = subject {
         set("x-statespace-subject", subject);
     }
@@ -359,7 +396,7 @@ fn prepare_headers(
     }
 }
 
-/// Requests that can be sent again to control when a variant fails: those
+/// Requests that can be sent again to the default when an arm fails: those
 /// without a body.
 fn replayable(request: &Request<Incoming>) -> bool {
     matches!(
@@ -368,11 +405,12 @@ fn replayable(request: &Request<Incoming>) -> bool {
     ) && request.body().is_end_stream()
 }
 
-fn upstream_uri(port: u16, uri: &http::Uri) -> http::Uri {
+/// The request's path and query at `address`, such as `http://127.0.0.1:41022`.
+fn upstream_uri(address: &str, uri: &http::Uri) -> http::Uri {
     let path = uri.path_and_query().map_or("/", |path| path.as_str());
-    format!("http://127.0.0.1:{port}{path}")
+    format!("{}{path}", address.trim_end_matches('/'))
         .parse()
-        .expect("a port and a request path form a URI")
+        .unwrap_or_else(|_| http::Uri::from_static("http://127.0.0.1:9/"))
 }
 
 fn is_upgrade(headers: &HeaderMap) -> bool {
@@ -500,11 +538,38 @@ mod tests {
     }
 
     #[test]
-    fn targets_the_process_port() {
+    fn targets_the_upstream_address() {
         let uri: http::Uri = "https://example.com/a/b?c=d".parse().unwrap();
         assert_eq!(
-            upstream_uri(9001, &uri).to_string(),
+            upstream_uri("http://127.0.0.1:9001", &uri).to_string(),
             "http://127.0.0.1:9001/a/b?c=d"
+        );
+        assert_eq!(
+            upstream_uri("http://shop-price-control.shop.svc:8000/", &uri).to_string(),
+            "http://shop-price-control.shop.svc:8000/a/b?c=d"
+        );
+    }
+
+    #[test]
+    fn suspected_remote_arms_get_no_traffic_for_a_while() {
+        let key = Key {
+            experiment: "price".into(),
+            experiment_version: 1,
+            arm: "control".into(),
+            version: None,
+        };
+        let upstreams = Upstreams::Kubernetes {
+            default: "http://localhost:8000".into(),
+            arms: RwLock::new(HashMap::from([(key.clone(), "http://arm".to_owned())])),
+            suspects: Mutex::default(),
+        };
+        let arm = Target::Arm(key);
+        assert_eq!(upstreams.address(&arm).as_deref(), Some("http://arm"));
+        upstreams.suspect(&arm);
+        assert_eq!(upstreams.address(&arm), None);
+        assert_eq!(
+            upstreams.address(&Target::Default).as_deref(),
+            Some("http://localhost:8000")
         );
     }
 }

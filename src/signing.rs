@@ -1,22 +1,16 @@
 //! Ed25519 signatures on variants. CI signs with a private key that never
-//! leaves it; `ssp host` runs only variants signed by a key it trusts.
+//! leaves it; `ssp proxy` and `ssp controller` run only variants signed by
+//! a key they trust.
 
 use anyhow::{Context, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
-/// The bytes a variant's signature covers: its bundle, app, name, start
-/// command, and commit. The backend builds the same message.
-pub fn message(
-    app: &str,
-    name: &str,
-    sha256: &str,
-    command: Option<&str>,
-    commit: Option<&str>,
-) -> String {
+/// The bytes a variant's signature covers: its image by digest, app, name,
+/// and commit. The backend builds the same message.
+pub fn message(app: &str, name: &str, image: &str, commit: Option<&str>) -> String {
     format!(
-        "statespace-variant-v1\n{app}\n{name}\n{sha256}\n{}\n{}",
-        command.unwrap_or_default(),
+        "statespace-variant-v2\n{app}\n{name}\n{image}\n{}",
         commit.unwrap_or_default()
     )
 }
@@ -35,7 +29,7 @@ pub fn private_key(encoded: &str) -> anyhow::Result<SigningKey> {
         .decode(encoded.trim())
         .ok()
         .and_then(|bytes| bytes.try_into().ok())
-        .context("the signing key must be 32 bytes of base64, as `ssp variant keygen` prints")?;
+        .context("the signing key must be 32 bytes of base64, as `ssp keygen` prints")?;
     Ok(SigningKey::from_bytes(&bytes))
 }
 
@@ -80,18 +74,12 @@ mod tests {
     #[test]
     fn trusted_keys_verify_what_they_signed() {
         let (private, public) = generate();
-        let signed = message("web", "fast", "abc", None, Some("1a2b"));
+        let signed = message("web", "fast", "ghcr.io/acme/web@sha256:aa", Some("1a2b"));
         let (signature, signer) = sign(&private_key(&private).unwrap(), &signed);
         assert_eq!(signer, public);
         let trusted = [public_key(&public).unwrap()];
         assert!(verify(&trusted, &signature, &signed).is_ok());
-        let changed = message(
-            "web",
-            "fast",
-            "abc",
-            Some("sh -c evil {port}"),
-            Some("1a2b"),
-        );
+        let changed = message("web", "fast", "ghcr.io/evil/web@sha256:aa", Some("1a2b"));
         assert!(verify(&trusted, &signature, &changed).is_err());
         let (_, other) = generate();
         assert!(verify(&[public_key(&other).unwrap()], &signature, &signed).is_err());
@@ -100,8 +88,8 @@ mod tests {
     #[test]
     fn matches_the_backend_message() {
         assert_eq!(
-            message("web", "fast", "abc", Some("serve {port}"), None),
-            "statespace-variant-v1\nweb\nfast\nabc\nserve {port}\n"
+            message("web", "fast", "ghcr.io/acme/web@sha256:aa", None),
+            "statespace-variant-v2\nweb\nfast\nghcr.io/acme/web@sha256:aa\n"
         );
     }
 }

@@ -1,6 +1,7 @@
-//! Events the host sends to Statespace: runs, outcomes, requests, output,
-//! metrics, and lifecycle events. Sending never blocks or slows the app:
-//! when the buffer is full, events are dropped and counted.
+//! Events proxies and controllers send to Statespace: runs, and each arm's
+//! requests, output, metrics, and lifecycle events. The default is never
+//! recorded. Sending never blocks or slows the app: when the buffer is
+//! full, events are dropped and counted.
 
 use std::{
     collections::HashMap,
@@ -16,7 +17,6 @@ use tokio::sync::mpsc;
 
 use super::{
     assign::{Assignment, Key},
-    output::Outcome,
     remote::Remote,
 };
 
@@ -24,10 +24,10 @@ use super::{
 const BUFFER: usize = 100_000;
 /// Events per request to the API, at most.
 const BATCH: usize = 1000;
-/// How long a host remembers that it recorded a subject's run.
+/// How long a proxy remembers that it recorded a subject's run.
 const RUN_MEMORY: Duration = Duration::from_secs(30 * 60);
 
-/// A run a host recorded: its experiment, version, subject, and reason.
+/// A run a proxy recorded: its experiment, version, subject, and reason.
 type RunKey = (String, u32, String, &'static str);
 
 pub struct Telemetry {
@@ -38,7 +38,7 @@ pub struct Telemetry {
     http: Mutex<HashMap<Key, Window>>,
 }
 
-/// One minute of a process's HTTP traffic.
+/// One minute of an arm's HTTP traffic.
 #[derive(Default)]
 struct Window {
     durations: Vec<f64>,
@@ -79,7 +79,7 @@ impl Telemetry {
         }
     }
 
-    /// Record a subject's assignment the first time this host routes it.
+    /// Record a subject's assignment the first time this proxy routes it.
     pub fn run(&self, assignment: &Assignment, method: &str, path: &str) {
         let key = (
             assignment.experiment.clone(),
@@ -107,7 +107,7 @@ impl Telemetry {
                 "experiment": assignment.experiment,
                 "version": assignment.version,
                 "subject_id": assignment.subject,
-                "variant": assignment.assigned.as_ref().map(|key| &key.name),
+                "variant": assignment.assigned.as_ref().map(|key| &key.arm),
                 "variant_version": assignment.assigned.as_ref().and_then(|key| key.version),
                 "reason": assignment.reason.as_str(),
                 "context": {"method": method, "path": path},
@@ -115,52 +115,33 @@ impl Telemetry {
         );
     }
 
-    pub fn outcome(&self, process: &Key, outcome: Outcome) {
-        self.send(
-            "outcomes",
-            json!({
-                "subject_id": outcome.subject,
-                "name": outcome.name,
-                "data": outcome.data,
-                "variant": process.name,
-                "variant_version": process.version,
-            }),
-        );
+    /// An arm's fields every event about it carries.
+    fn arm(key: &Key, mut event: Value) -> Value {
+        event["experiment"] = json!(key.experiment);
+        event["experiment_version"] = json!(key.experiment_version);
+        event["variant"] = json!(key.arm);
+        event["variant_version"] = json!(key.version);
+        event
     }
 
-    pub fn output(&self, process: &Key, stream: &str, line: String) {
+    pub fn output(&self, key: &Key, stream: &str, line: String) {
         self.send(
             "output",
-            json!({
-                "variant": process.name,
-                "variant_version": process.version,
-                "stream": stream,
-                "line": line,
-            }),
+            Self::arm(key, json!({"stream": stream, "line": line})),
         );
     }
 
-    pub fn lifecycle(&self, process: &Key, event: &str, data: Value) {
+    pub fn lifecycle(&self, key: &Key, event: &str, data: Value) {
         self.send(
             "lifecycle",
-            json!({
-                "variant": process.name,
-                "variant_version": process.version,
-                "event": event,
-                "data": data,
-            }),
+            Self::arm(key, json!({"event": event, "data": data})),
         );
     }
 
-    pub fn resources(&self, process: &Key, data: Value) {
+    pub fn resources(&self, key: &Key, data: Value) {
         self.send(
             "metrics",
-            json!({
-                "variant": process.name,
-                "variant_version": process.version,
-                "kind": "resources",
-                "data": data,
-            }),
+            Self::arm(key, json!({"kind": "resources", "data": data})),
         );
     }
 
@@ -168,10 +149,10 @@ impl Telemetry {
         self.send("requests", request);
     }
 
-    /// Count one finished request toward its process's per-minute summary.
-    pub fn record_http(&self, process: &Key, status: u16, duration_ms: f64) {
+    /// Count one finished request toward its arm's per-minute summary.
+    pub fn record_http(&self, key: &Key, status: u16, duration_ms: f64) {
         let mut windows = self.http.lock().expect("HTTP windows are never poisoned");
-        let window = windows.entry(process.clone()).or_default();
+        let window = windows.entry(key.clone()).or_default();
         window.durations.push(duration_ms);
         *window
             .statuses
@@ -186,7 +167,7 @@ impl Telemetry {
     pub fn flush_http(&self) {
         let windows =
             std::mem::take(&mut *self.http.lock().expect("HTTP windows are never poisoned"));
-        for (process, mut window) in windows {
+        for (key, mut window) in windows {
             window.durations.sort_by(f64::total_cmp);
             let percentile = |share: f64| {
                 let index = ((window.durations.len() as f64 - 1.0) * share).round() as usize;
@@ -199,20 +180,21 @@ impl Telemetry {
                 .collect();
             self.send(
                 "metrics",
-                json!({
-                    "variant": process.name,
-                    "variant_version": process.version,
-                    "kind": "http",
-                    "data": {
-                        "requests": window.durations.len(),
-                        "errors": window.errors,
-                        "statuses": statuses,
-                        "p50_ms": percentile(0.5),
-                        "p90_ms": percentile(0.9),
-                        "p99_ms": percentile(0.99),
-                        "max_ms": window.durations.last(),
-                    },
-                }),
+                Self::arm(
+                    &key,
+                    json!({
+                        "kind": "http",
+                        "data": {
+                            "requests": window.durations.len(),
+                            "errors": window.errors,
+                            "statuses": statuses,
+                            "p50_ms": percentile(0.5),
+                            "p90_ms": percentile(0.9),
+                            "p99_ms": percentile(0.99),
+                            "max_ms": window.durations.last(),
+                        },
+                    }),
+                ),
             );
         }
     }
@@ -281,7 +263,7 @@ pub fn now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::assign::Reason;
+    use crate::proxy::assign::Reason;
 
     #[tokio::test]
     async fn records_each_runs_first_exposure_once() {
@@ -293,17 +275,23 @@ mod tests {
             runs: Mutex::default(),
             http: Mutex::default(),
         };
+        let control = Key {
+            experiment: "checkout".into(),
+            experiment_version: 1,
+            arm: "control".into(),
+            version: None,
+        };
         let assignment = Assignment {
             experiment: "checkout".into(),
             version: 1,
             subject: "u_1".into(),
-            assigned: Some(Key::control()),
+            assigned: Some(control.clone()),
             reason: Reason::Assigned,
         };
         telemetry.run(&assignment, "GET", "/");
         telemetry.run(&assignment, "GET", "/again");
-        telemetry.record_http(&Key::control(), 200, 10.0);
-        telemetry.record_http(&Key::control(), 503, 30.0);
+        telemetry.record_http(&control, 200, 10.0);
+        telemetry.record_http(&control, 503, 30.0);
         telemetry.flush_http();
         let (table, run) = receiver.recv().await.unwrap();
         assert_eq!((table, run["reason"].as_str()), ("runs", Some("assigned")));
@@ -311,6 +299,10 @@ mod tests {
         let (table, metric) = receiver.recv().await.unwrap();
         assert_eq!(table, "metrics");
         assert_eq!(metric["data"]["requests"], 2);
+        assert_eq!(
+            (&metric["experiment"], &metric["variant"]),
+            (&json!("checkout"), &json!("control"))
+        );
         assert_eq!(metric["data"]["errors"], 1);
         assert_eq!(metric["data"]["p50_ms"], 30.0);
         assert!(

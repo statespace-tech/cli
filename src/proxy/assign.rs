@@ -1,5 +1,5 @@
-//! Which variant serves a request: the subject, its experiment, and its
-//! variant, decided from the app's configuration without a network call.
+//! What serves a request: the subject, its experiment, and its arm,
+//! decided from the app's configuration without a network call.
 
 use std::collections::BTreeMap;
 
@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-/// The cookie the host sets so anonymous visitors keep their variant.
+/// The cookie the proxy sets so anonymous visitors keep their arm.
 pub const SUBJECT_COOKIE: &str = "ssp_sid";
 
 /// An app's running configuration, as the API returns it.
@@ -28,7 +28,17 @@ pub struct ExperimentConfig {
     pub eligibility: Option<String>,
     pub salt: String,
     pub traffic_ranges: Vec<[f64; 2]>,
+    pub control: ControlConfig,
     pub variants: Vec<VariantConfig>,
+}
+
+/// An experiment's control arm: the default image pinned when the version
+/// started, and where a controller runs it.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ControlConfig {
+    pub image: Option<String>,
+    pub address: Option<String>,
+    pub ready: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -36,30 +46,57 @@ pub struct VariantConfig {
     pub name: String,
     pub version: u32,
     pub ranges: Vec<[f64; 2]>,
-    pub sha256: String,
-    pub size: i64,
-    pub command: Option<String>,
+    pub image: String,
     pub commit: Option<String>,
     pub signature: String,
+    pub address: Option<String>,
+    pub ready: bool,
 }
 
-/// A process the host runs: control, or one version of a variant.
+/// One arm of one experiment version: its control, or a version of a variant.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Key {
-    pub name: String,
+    pub experiment: String,
+    pub experiment_version: u32,
+    /// `control` or a variant.
+    pub arm: String,
+    /// The variant's version; `None` for control.
     pub version: Option<u32>,
 }
 
 impl Key {
-    pub fn control() -> Self {
-        Self {
-            name: "control".into(),
-            version: None,
-        }
-    }
-
     pub fn is_control(&self) -> bool {
-        self.name == "control"
+        self.arm == "control"
+    }
+}
+
+impl std::fmt::Display for Key {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.version {
+            Some(version) => write!(formatter, "{}@{version}", self.arm),
+            None => write!(formatter, "{}", self.arm),
+        }?;
+        write!(
+            formatter,
+            " of {}@{}",
+            self.experiment, self.experiment_version
+        )
+    }
+}
+
+/// What serves a request: the app's default, or an arm.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Target {
+    Default,
+    Arm(Key),
+}
+
+impl std::fmt::Display for Target {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Default => write!(formatter, "default"),
+            Self::Arm(key) => key.fmt(formatter),
+        }
     }
 }
 
@@ -77,9 +114,15 @@ pub struct Routing {
     pub experiments: Vec<Compiled>,
 }
 
+/// Where an arm's image comes from.
+pub enum Arm<'a> {
+    Control(&'a ControlConfig),
+    Variant(&'a VariantConfig),
+}
+
 impl Routing {
     /// Compile every experiment. One with a rule that does not compile is
-    /// skipped, so its subjects get control, and reported in the result.
+    /// skipped, so its subjects get the default, and reported in the result.
     pub fn compile(config: &HostConfig) -> (Self, Vec<String>) {
         let mut errors = Vec::new();
         let mut experiments = Vec::new();
@@ -98,22 +141,61 @@ impl Routing {
         )
     }
 
-    /// Every variant that running experiments use, in a stable order.
-    pub fn variants(&self) -> Vec<(Key, &VariantConfig)> {
-        let mut variants: BTreeMap<Key, &VariantConfig> = BTreeMap::new();
+    /// Every arm of the running experiments: each experiment's control,
+    /// then its variants.
+    pub fn arms(&self) -> Vec<(Key, Arm<'_>)> {
+        let mut arms = Vec::new();
         for experiment in &self.experiments {
-            for variant in &experiment.config.variants {
-                variants.insert(
-                    Key {
-                        name: variant.name.clone(),
-                        version: Some(variant.version),
-                    },
-                    variant,
-                );
+            let config = &experiment.config;
+            let key = |arm: &str, version| Key {
+                experiment: config.name.clone(),
+                experiment_version: config.version,
+                arm: arm.to_owned(),
+                version,
+            };
+            if control_weight(config) > 0.0 {
+                arms.push((key("control", None), Arm::Control(&config.control)));
+            }
+            for variant in &config.variants {
+                arms.push((
+                    key(&variant.name, Some(variant.version)),
+                    Arm::Variant(variant),
+                ));
             }
         }
-        variants.into_iter().collect()
+        arms
     }
+}
+
+/// The share of an experiment's subjects that its control arm gets.
+pub fn control_weight(config: &ExperimentConfig) -> f64 {
+    1.0 - config
+        .variants
+        .iter()
+        .flat_map(|variant| &variant.ranges)
+        .map(|[start, end]| end - start)
+        .sum::<f64>()
+}
+
+/// The share of all the app's subjects an arm gets.
+pub fn share(config: &ExperimentConfig, arm: &Key) -> f64 {
+    let traffic: f64 = config
+        .traffic_ranges
+        .iter()
+        .map(|[start, end]| end - start)
+        .sum();
+    let weight = if arm.is_control() {
+        control_weight(config)
+    } else {
+        config
+            .variants
+            .iter()
+            .filter(|variant| variant.name == arm.arm)
+            .flat_map(|variant| &variant.ranges)
+            .map(|[start, end]| end - start)
+            .sum()
+    };
+    traffic * weight
 }
 
 fn compile_experiment(config: &ExperimentConfig) -> anyhow::Result<Compiled> {
@@ -138,7 +220,7 @@ fn compile(expression: &str) -> anyhow::Result<Program> {
     }
 }
 
-/// Why a subject got the variant it did.
+/// Why a subject got what it did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
     Assigned,
@@ -164,7 +246,7 @@ pub struct Assignment {
     pub experiment: String,
     pub version: u32,
     pub subject: String,
-    /// The variant the subject is assigned to, or `None` when ineligible.
+    /// The arm the subject is assigned to, or `None` when ineligible.
     pub assigned: Option<Key>,
     pub reason: Reason,
 }
@@ -172,15 +254,15 @@ pub struct Assignment {
 /// What serves a request, and the assignment behind it, if any.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Decision {
-    pub serve: Key,
+    pub serve: Target,
     pub assignment: Option<Assignment>,
 }
 
-/// Decide who serves `request`. `ready` says whether a variant can take
-/// traffic; a subject whose variant cannot gets control.
+/// Decide who serves `request`. `ready` says whether an arm can take
+/// traffic; a subject whose arm cannot gets the default.
 pub fn decide(routing: &Routing, request: &Value, ready: impl Fn(&Key) -> bool) -> Decision {
-    let control = Decision {
-        serve: Key::control(),
+    let default = Decision {
+        serve: Target::Default,
         assignment: None,
     };
     let Some((experiment, subject)) = routing.experiments.iter().find_map(|experiment| {
@@ -188,7 +270,7 @@ pub fn decide(routing: &Routing, request: &Value, ready: impl Fn(&Key) -> bool) 
         let point = bucket(&routing.salt, &subject);
         contains(&experiment.config.traffic_ranges, point).then_some((experiment, subject))
     }) else {
-        return control;
+        return default;
     };
     let config = &experiment.config;
     let assignment = |assigned, reason| Assignment {
@@ -206,35 +288,40 @@ pub fn decide(routing: &Routing, request: &Value, ready: impl Fn(&Key) -> bool) 
         Ok(true) => {}
         Ok(false) => {
             return Decision {
-                serve: Key::control(),
+                serve: Target::Default,
                 assignment: Some(assignment(None, Reason::Ineligible)),
             };
         }
         Err(_) => {
             return Decision {
-                serve: Key::control(),
+                serve: Target::Default,
                 assignment: Some(assignment(None, Reason::EligibilityError)),
             };
         }
     }
     let point = bucket(&config.salt, &subject);
-    let variant = config
+    let (arm, version) = config
         .variants
         .iter()
         .find(|variant| contains(&variant.ranges, point))
-        .map_or_else(Key::control, |variant| Key {
-            name: variant.name.clone(),
-            version: Some(variant.version),
+        .map_or(("control", None), |variant| {
+            (variant.name.as_str(), Some(variant.version))
         });
-    if !variant.is_control() && !ready(&variant) {
+    let key = Key {
+        experiment: config.name.clone(),
+        experiment_version: config.version,
+        arm: arm.to_owned(),
+        version,
+    };
+    if !ready(&key) {
         return Decision {
-            serve: Key::control(),
-            assignment: Some(assignment(Some(variant), Reason::VariantUnavailable)),
+            serve: Target::Default,
+            assignment: Some(assignment(Some(key), Reason::VariantUnavailable)),
         };
     }
     Decision {
-        serve: variant.clone(),
-        assignment: Some(assignment(Some(variant), Reason::Assigned)),
+        serve: Target::Arm(key.clone()),
+        assignment: Some(assignment(Some(key), Reason::Assigned)),
     }
 }
 
@@ -367,17 +454,18 @@ mod tests {
                 eligibility: eligibility.map(Into::into),
                 salt: "experiment-salt".into(),
                 traffic_ranges: vec![traffic],
+                control: ControlConfig::default(),
                 variants: variants
                     .iter()
                     .map(|(name, range)| VariantConfig {
                         name: (*name).into(),
                         version: 1,
                         ranges: vec![*range],
-                        sha256: String::new(),
-                        size: 1,
-                        command: None,
+                        image: String::new(),
                         commit: None,
                         signature: String::new(),
+                        address: None,
+                        ready: false,
                     })
                     .collect(),
             }],
@@ -414,44 +502,63 @@ mod tests {
             );
             let assignment = decision.assignment.unwrap();
             assert_eq!(assignment.reason, Reason::Assigned);
-            assert_eq!(assignment.assigned.as_ref(), Some(&decision.serve));
-            *served.entry(decision.serve.name).or_insert(0) += 1;
+            let Target::Arm(arm) = decision.serve else {
+                panic!("an assigned subject gets an arm");
+            };
+            assert_eq!(assignment.assigned.as_ref(), Some(&arm));
+            *served.entry(arm.arm).or_insert(0) += 1;
         }
-        // Half of the subjects, give or take sampling noise.
+        // Half of the subjects each, give or take sampling noise; control
+        // is an arm of its own.
         assert!((150..250).contains(&served["fast"]), "{served:?}");
+        assert!((150..250).contains(&served["control"]), "{served:?}");
     }
 
     #[test]
-    fn subjects_outside_the_slice_get_control_without_a_run() {
+    fn subjects_outside_the_slice_get_the_default_without_a_run() {
         let (routing, _) = Routing::compile(&config(&[("fast", [0.0, 1.0])], [0.0, 0.0], None));
         let decision = decide(&routing, &request(Some("u_1"), "US"), |_| true);
         assert_eq!(
             (decision.serve, decision.assignment),
-            (Key::control(), None)
+            (Target::Default, None)
         );
         let no_subject = decide(&routing, &request(None, "US"), |_| true);
         assert_eq!(no_subject.assignment, None);
     }
 
     #[test]
-    fn eligibility_and_readiness_send_subjects_to_control() {
+    fn eligibility_and_readiness_send_subjects_to_the_default() {
         let rule = Some("request.headers[\"cf-ipcountry\"] == \"US\"");
         let (routing, _) = Routing::compile(&config(&[("fast", [0.0, 1.0])], [0.0, 1.0], rule));
         let elsewhere = decide(&routing, &request(Some("u_1"), "FR"), |_| true);
-        assert_eq!(elsewhere.serve, Key::control());
+        assert_eq!(elsewhere.serve, Target::Default);
         assert_eq!(elsewhere.assignment.unwrap().reason, Reason::Ineligible);
 
         let down = decide(&routing, &request(Some("u_1"), "US"), |_| false);
-        assert_eq!(down.serve, Key::control());
+        assert_eq!(down.serve, Target::Default);
         let assignment = down.assignment.unwrap();
         assert_eq!(assignment.reason, Reason::VariantUnavailable);
-        assert_eq!(assignment.assigned.unwrap().name, "fast");
+        assert_eq!(assignment.assigned.unwrap().arm, "fast");
 
         // A missing header is null, but adding a number to text is an error.
         let broken = Some("request.headers[\"x-user-id\"] + 1 == 2");
         let (routing, _) = Routing::compile(&config(&[("fast", [0.0, 1.0])], [0.0, 1.0], broken));
         let error = decide(&routing, &request(Some("u_1"), "US"), |_| true);
         assert_eq!(error.assignment.unwrap().reason, Reason::EligibilityError);
+    }
+
+    #[test]
+    fn lists_each_experiments_arms_and_their_shares() {
+        let (routing, _) = Routing::compile(&config(&[("fast", [0.0, 0.25])], [0.0, 0.2], None));
+        let arms = routing.arms();
+        let names: Vec<String> = arms.iter().map(|(key, _)| key.to_string()).collect();
+        assert_eq!(names, ["control of checkout@3", "fast@1 of checkout@3"]);
+        let experiment = &routing.experiments[0].config;
+        assert!((share(experiment, &arms[0].0) - 0.15).abs() < 1e-12);
+        assert!((share(experiment, &arms[1].0) - 0.05).abs() < 1e-12);
+        // An experiment whose variants take every subject has no control arm.
+        let (routing, _) = Routing::compile(&config(&[("fast", [0.0, 1.0])], [0.0, 1.0], None));
+        assert_eq!(routing.arms().len(), 1);
     }
 
     #[test]

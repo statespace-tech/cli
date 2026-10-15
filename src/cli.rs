@@ -1,7 +1,5 @@
 //! Command-line arguments.
 
-use std::path::PathBuf;
-
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
@@ -9,15 +7,16 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
     name = "ssp",
     version,
     about = "A/B test whole versions of your app in production",
-    after_help = "Every command except `ssp host` prints JSON. Documentation: https://docs.statespace.com"
+    after_help = "Every command except `ssp proxy` and `ssp controller` prints JSON. \
+                  Documentation: https://docs.statespace.com"
 )]
 pub struct Cli {
     /// Statespace API URL.
     #[arg(long, env = "STATESPACE_URL", global = true)]
     pub endpoint: Option<String>,
-    /// API key. Defaults to the saved `ssp login` session.
-    #[arg(long, env = "SSP_API_KEY", global = true, hide_env_values = true)]
-    pub api_key: Option<String>,
+    /// A token. Defaults to the saved `ssp login` session.
+    #[arg(long, env = "SSP_TOKEN", global = true, hide_env_values = true)]
+    pub token: Option<String>,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -30,40 +29,102 @@ pub enum Command {
         #[arg(long)]
         no_open: bool,
     },
-    /// Remove the saved session.
-    Logout,
-    /// Show the signed-in account.
-    Account,
+    /// Sign this terminal out.
+    Logout {
+        /// Sign out every session of the account, everywhere.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Show the account, the credential in use, what it may do, and storage use.
+    Whoami,
+    /// Print a new key pair for signing variants. Nothing is stored.
+    Keygen,
+    /// Manage tokens: credentials for programs, agents, and SQL.
+    #[command(subcommand)]
+    Token(TokenCommand),
     /// Define apps: one codebase and deployment each.
     #[command(subcommand)]
     App(AppCommand),
-    /// Publish signed, ready-to-run builds of an app.
+    /// Publish signed images of an app as variants.
     #[command(subcommand)]
     Variant(VariantCommand),
-    /// Compare variants against the deployed version of an app.
+    /// Compare variants against a control arm of the app's default.
     #[command(subcommand)]
     Experiment(ExperimentCommand),
-    /// Run an app and its variants behind a proxy that assigns each subject.
-    Host(Box<HostArgs>),
-    /// Manage API keys for applications and agents.
-    #[command(subcommand)]
-    Key(KeyCommand),
-    /// Manage signed-in terminal sessions.
-    #[command(subcommand)]
-    Token(TokenCommand),
-    /// Manage read-only PostgreSQL access to runs, outcomes, and logs.
-    #[command(subcommand)]
-    Database(DatabaseCommand),
-    /// Show event storage usage and the account quota.
-    Storage,
-    /// List account audit records, newest first.
-    Audit {
-        #[arg(long, default_value_t = 50)]
-        limit: u32,
-        /// Return records older than this ID.
+    /// Run a reverse proxy that assigns each request's subject and forwards
+    /// it to the app's default or to an experiment's arm.
+    Proxy(Box<ProxyArgs>),
+    /// Run the arms of an app's experiments on Kubernetes.
+    Controller(Box<ControllerArgs>),
+}
+
+#[derive(Subcommand)]
+pub enum TokenCommand {
+    /// Create a token. It is printed only once.
+    Create {
         #[arg(long)]
-        before: Option<i64>,
+        name: String,
+        /// The usual scopes for a job.
+        #[arg(long, conflicts_with = "scopes", required_unless_present = "scopes")]
+        preset: Option<Preset>,
+        /// A scope, for combinations no preset covers. Repeat for each.
+        #[arg(long = "scope", value_parser = SCOPES)]
+        scopes: Vec<String>,
+        /// Limit what the token reads in SQL to one app. Needs `query:read`.
+        #[arg(long, env = "STATESPACE_APP")]
+        app: Option<String>,
+        /// Days until the token expires. Omit for no expiration.
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..=3650))]
+        expires_in_days: Option<i64>,
     },
+    /// List tokens and sessions, without their secrets.
+    List,
+    /// Revoke a token or session by its ID, or all of them.
+    Revoke {
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        id: Option<String>,
+        /// Revoke every token and session of the account.
+        #[arg(long)]
+        all: bool,
+        /// Confirm revoking everything.
+        #[arg(long, requires = "all")]
+        yes: bool,
+    },
+}
+
+pub const SCOPES: [&str; 6] = [
+    "runtime:read",
+    "events:write",
+    "variants:report",
+    "experiments:write",
+    "query:read",
+    "tokens:manage",
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum Preset {
+    /// For `ssp proxy`: read the app's configuration and send events.
+    Runtime,
+    /// For `ssp controller`: runtime, and report where arms run.
+    Controller,
+    /// For CI: publish variants and run experiments.
+    Publisher,
+    /// For SQL: read runs, output, and requests.
+    Analyst,
+    /// Everything, for agents that run the whole loop.
+    Admin,
+}
+
+impl Preset {
+    pub fn scopes(self) -> Vec<&'static str> {
+        match self {
+            Self::Runtime => vec!["runtime:read", "events:write"],
+            Self::Controller => vec!["runtime:read", "events:write", "variants:report"],
+            Self::Publisher => vec!["experiments:write"],
+            Self::Analyst => vec!["query:read"],
+            Self::Admin => SCOPES.to_vec(),
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -72,26 +133,22 @@ pub enum AppCommand {
     Create {
         /// Lowercase letters, digits, and underscores, starting with a letter.
         name: String,
-        /// Days to keep captured output. Defaults to 7.
-        #[arg(long)]
-        output_retention: Option<i32>,
+        /// Days to keep the lines arms print. Defaults to 7.
+        #[arg(long = "output-retention-days")]
+        output_retention: Option<u32>,
     },
     /// Change an app's settings.
     Update {
         name: String,
-        /// Days to keep captured output.
-        #[arg(long, required = true)]
-        output_retention: Option<i32>,
+        /// Days to keep the lines arms print.
+        #[arg(long = "output-retention-days")]
+        output_retention: Option<u32>,
     },
-    /// List apps and the traffic their running experiments hold.
+    /// List apps and the share of subjects their running experiments hold.
     List,
     /// Show an app.
     Show { name: String },
-    /// List the hosts that recently reported for an app.
-    Hosts { name: String },
-    /// List the outcome names an app recorded in the last 30 days.
-    Outcomes { name: String },
-    /// Erase one subject's runs, outcomes, and requests in an app.
+    /// Erase one subject's runs, requests, and lines in an app.
     EraseSubject { name: String, subject: String },
     /// Delete an app with its variants, experiments, and events.
     Delete {
@@ -104,25 +161,23 @@ pub enum AppCommand {
 
 #[derive(Subcommand)]
 pub enum VariantCommand {
-    /// Print a new signing key pair. Keep the private key in CI.
-    Keygen,
-    /// Package, sign, and upload a ready-to-run build as the next version of a variant.
+    /// Sign an image and publish it as the next version of a variant.
     Create {
-        /// The variant's name, such as `feature-x`.
+        /// The variant's name, such as `lower-price`.
         name: String,
-        /// The directory to package: the build as it runs, dependencies included.
-        path: PathBuf,
         #[arg(long, env = "STATESPACE_APP")]
         app: String,
-        /// How to start this variant, with `{port}` for its port. Defaults to the host's command.
+        /// The image, by tag or digest. A tag is resolved to its digest with
+        /// `docker`, so the signature covers exact bytes.
         #[arg(long)]
-        command: Option<String>,
-        /// The commit the build came from. Defaults to the directory's Git HEAD.
+        image: String,
+        /// The commit the image was built from. Defaults to CI's commit, such
+        /// as `GITHUB_SHA`, or the current directory's Git HEAD.
         #[arg(long)]
         commit: Option<String>,
-        /// The base64 private key from `ssp variant keygen`.
+        /// The base64 private key from `ssp keygen`.
         #[arg(long, env = "SSP_SIGNING_KEY", hide_env_values = true)]
-        sign_key: String,
+        signing_key: String,
     },
     /// List the newest version of each variant of an app.
     List {
@@ -134,16 +189,6 @@ pub enum VariantCommand {
         name: String,
         #[arg(long, env = "STATESPACE_APP")]
         app: String,
-    },
-    /// Show a variant's newest lifecycle events and captured output.
-    Logs {
-        name: String,
-        #[arg(long, env = "STATESPACE_APP")]
-        app: String,
-        #[arg(long)]
-        version: Option<u32>,
-        #[arg(long, default_value_t = 100)]
-        limit: u32,
     },
     /// Delete a variant that no experiment uses.
     Delete {
@@ -163,7 +208,7 @@ pub enum ExperimentCommand {
         #[arg(long, env = "STATESPACE_APP")]
         app: String,
         /// CEL over `request` that yields the subject ID. Defaults to
-        /// `request.cookies.ssp_sid`, a cookie the host sets. It cannot
+        /// `request.cookies.ssp_sid`, a cookie the proxy sets. It cannot
         /// change after the experiment starts.
         #[arg(long)]
         subject: Option<String>,
@@ -198,25 +243,11 @@ pub enum ExperimentCommand {
         #[arg(long)]
         note: Option<String>,
     },
-    /// Stop the running version. Hosts route its subjects to control.
+    /// Stop the running version. Its subjects get the default again.
     Stop {
         name: String,
         #[arg(long)]
         note: Option<String>,
-    },
-    /// Compare an outcome across variants.
-    Results {
-        name: String,
-        /// Outcome name the app prints.
-        #[arg(long)]
-        outcome: String,
-        /// Numeric or boolean field to sum per subject. Omit for the share
-        /// of subjects with the outcome.
-        #[arg(long)]
-        metric: Option<String>,
-        /// Version to analyze. Defaults to the running or newest version.
-        #[arg(long)]
-        version: Option<u32>,
     },
     /// Delete a stopped experiment with all of its versions and runs.
     Delete {
@@ -229,15 +260,12 @@ pub enum ExperimentCommand {
 
 #[derive(Args)]
 pub struct Settings {
-    /// A variant and its share of the experiment's subjects, such as
-    /// `feature-x=0.5`. Repeat for each variant; control receives the rest.
-    /// Replaces the draft's variants.
-    #[arg(long = "variant", value_name = "NAME=WEIGHT")]
-    pub variants: Vec<String>,
-    /// The share of the app's subjects the experiment holds while it runs.
-    /// Running experiments of an app never share subjects. Defaults to 1.
-    #[arg(long)]
-    pub traffic: Option<f64>,
+    /// An arm and its share of all the app's subjects, such as
+    /// `lower-price=0.05`. Repeat for each variant. Control gets the share of
+    /// the largest variant unless `control=SHARE` sets it. Replaces the
+    /// draft's arms.
+    #[arg(long = "split", value_name = "ARM=SHARE")]
+    pub split: Vec<String>,
     /// CEL over `request`, such as `request.headers["cf-ipcountry"] == "US"`.
     #[arg(long)]
     pub eligibility: Option<String>,
@@ -249,144 +277,109 @@ pub struct Settings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum Capture {
-    Stdout,
-    Stderr,
-    Http,
+pub enum Runtime {
+    /// Run the default and every arm as containers on this machine.
+    Docker,
+    /// Route only: Kubernetes runs the default, and `ssp controller` the arms.
+    Kubernetes,
+}
+
+/// What `ssp proxy` and `ssp controller` share.
+#[derive(Args)]
+pub struct Shared {
+    /// The app whose experiments to serve.
+    #[arg(long, env = "STATESPACE_APP")]
+    pub app: String,
+    /// A path that must answer 200 before an arm gets traffic. Without it,
+    /// an arm is ready once its port accepts connections.
+    #[arg(long, env = "STATESPACE_HEALTH")]
+    pub health: Option<String>,
+    /// How many arms run at once, control arms included, 1 to 64.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..=64))]
+    pub max_variants: Option<u32>,
+    /// Seconds to keep routing with the last configuration while Statespace
+    /// is unreachable. After that, every subject gets the default.
+    #[arg(long, default_value_t = 300)]
+    pub stale_after: u64,
+    /// An environment variable every arm gets and the default does not, such
+    /// as a database URL without schema permissions. Repeat for each.
+    #[arg(long = "variant-env", value_name = "NAME=VALUE")]
+    pub variant_env: Vec<String>,
+    /// A regular expression whose matches are replaced in recorded lines
+    /// before they leave this machine. Repeat for each.
+    #[arg(long = "redact", value_name = "REGEX")]
+    pub redact: Vec<String>,
 }
 
 #[derive(Args)]
-pub struct HostArgs {
-    /// The app whose running experiments to serve.
-    #[arg(long, env = "STATESPACE_APP", required_unless_present = "local")]
-    pub app: Option<String>,
-    /// The public address, which replaces the app's own.
+pub struct ProxyArgs {
+    #[command(flatten)]
+    pub shared: Shared,
+    /// How arms run.
+    #[arg(long, env = "STATESPACE_RUNTIME", value_enum)]
+    pub runtime: Runtime,
+    /// The public address.
     #[arg(long, env = "STATESPACE_LISTEN", default_value = "0.0.0.0:8080")]
     pub listen: String,
-    /// How to start the app, with `{port}` for the port it must listen on
-    /// at 127.0.0.1. Control runs it in the current directory.
+    /// The app's default image. With `--runtime docker`.
+    #[arg(long, env = "STATESPACE_IMAGE", conflicts_with = "image_file")]
+    pub image: Option<String>,
+    /// A file holding the default image. On SIGHUP, the proxy reads it again
+    /// and swaps the default without dropping requests. With `--runtime docker`.
+    #[arg(long, env = "STATESPACE_IMAGE_FILE")]
+    pub image_file: Option<std::path::PathBuf>,
+    /// The port the app listens on in its container. Defaults to the
+    /// image's `EXPOSE`. With `--runtime docker`.
+    #[arg(long, env = "STATESPACE_PORT")]
+    pub port: Option<u16>,
+    /// A volume, as `docker run --volume` takes it. Repeat for each. With
+    /// `--runtime docker`.
+    #[arg(long = "volume", value_name = "SOURCE:TARGET")]
+    pub volumes: Vec<String>,
+    /// A memory limit for each container, such as `1g`. With `--runtime docker`.
     #[arg(long)]
-    pub command: String,
-    /// A path that must answer 200 before a process gets traffic. Without
-    /// it, a process is ready once its port accepts connections.
+    pub memory: Option<String>,
+    /// A CPU limit for each container, such as `1.5`. With `--runtime docker`.
     #[arg(long)]
-    pub health: Option<String>,
+    pub cpus: Option<String>,
+    /// Where the default listens, such as `http://localhost:8000`. With
+    /// `--runtime kubernetes`.
+    #[arg(long, env = "STATESPACE_DEFAULT")]
+    pub default: Option<String>,
+    /// A base64 public key whose signed variants may run. Repeat to rotate
+    /// keys. With `--runtime docker`.
+    #[arg(
+        long = "trust-key",
+        value_name = "KEY",
+        env = "SSP_TRUST_KEY",
+        value_delimiter = ','
+    )]
+    pub trust_keys: Vec<String>,
+}
+
+#[derive(Args)]
+pub struct ControllerArgs {
+    #[command(flatten)]
+    pub shared: Shared,
+    /// The Deployment that runs the app's default.
+    #[arg(long, env = "STATESPACE_DEPLOYMENT")]
+    pub deployment: String,
+    /// The default's app container. Defaults to its first container other
+    /// than `statespace-proxy`.
+    #[arg(long, env = "STATESPACE_CONTAINER")]
+    pub container: Option<String>,
+    /// The namespace of the Deployment. Defaults to the controller's own.
+    #[arg(long, env = "STATESPACE_NAMESPACE")]
+    pub namespace: Option<String>,
     /// A base64 public key whose signed variants may run. Repeat to rotate keys.
     #[arg(
         long = "trust-key",
         value_name = "KEY",
-        required_unless_present = "local"
+        env = "SSP_TRUST_KEY",
+        value_delimiter = ',',
+        required = true
     )]
     pub trust_keys: Vec<String>,
-    /// How many variants this host runs at once, besides control.
-    #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..=64))]
-    pub max_variants: u32,
-    /// Seconds to keep routing with the last configuration while Statespace
-    /// is unreachable. After that, every subject gets control.
-    #[arg(long, default_value_t = 300)]
-    pub stale_after: u64,
-    /// An environment variable that variants get and control does not, such
-    /// as a database URL without schema permissions. Repeat for each.
-    #[arg(long = "variant-env", value_name = "NAME=VALUE")]
-    pub variant_env: Vec<String>,
-    /// Send this to Statespace too. Repeat for each.
-    #[arg(long = "capture", value_enum)]
-    pub capture: Vec<Capture>,
-    /// A regular expression whose matches are replaced in captured output
-    /// before it leaves this machine. Repeat for each.
-    #[arg(long = "redact", value_name = "REGEX")]
-    pub redact: Vec<String>,
-    /// Where downloaded variants are kept.
-    #[arg(long, env = "STATESPACE_CACHE")]
-    pub cache: Option<PathBuf>,
-    /// Run local directories as variants, unsigned and without Statespace.
-    /// Choose a variant per request with the `x-statespace-variant` header.
-    #[arg(long, conflicts_with_all = ["trust_keys", "app"])]
-    pub local: bool,
-    /// A local variant as NAME=PATH, with `--local`. Repeat for each.
-    #[arg(long = "variant", value_name = "NAME=PATH", requires = "local")]
-    pub variants: Vec<String>,
-}
-
-#[derive(Subcommand)]
-pub enum KeyCommand {
-    /// Create a key. Its secret is printed only once.
-    Create {
-        #[arg(long)]
-        name: String,
-        /// `runtime` for `ssp host`; `admin` for agents and automation.
-        #[arg(long, conflicts_with = "scopes", required_unless_present = "scopes")]
-        preset: Option<KeyPreset>,
-        #[arg(long = "scope", value_parser = SCOPES)]
-        scopes: Vec<String>,
-        /// Days until the key expires. Omit for no expiration.
-        #[arg(long, value_parser = clap::value_parser!(i64).range(1..))]
-        expires_in_days: Option<i64>,
-    },
-    /// List keys without their secrets.
-    List,
-    /// Revoke a key.
-    Revoke { id: String },
-}
-
-pub const SCOPES: [&str; 6] = [
-    "experiments:write",
-    "runtime:read",
-    "events:write",
-    "query:read",
-    "keys:manage",
-    "audit:read",
-];
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum KeyPreset {
-    Runtime,
-    Admin,
-}
-
-impl KeyPreset {
-    pub fn scopes(self) -> Vec<&'static str> {
-        match self {
-            Self::Runtime => vec!["runtime:read", "events:write"],
-            Self::Admin => SCOPES.to_vec(),
-        }
-    }
-}
-
-#[derive(Subcommand)]
-pub enum TokenCommand {
-    /// List terminal sessions.
-    List,
-    /// Revoke a terminal session.
-    Revoke { id: String },
-    /// Revoke every key, terminal session, and browser session.
-    RevokeAll {
-        #[arg(long)]
-        yes: bool,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum DatabaseCommand {
-    /// Manage read-only PostgreSQL credentials.
-    #[command(subcommand)]
-    Credential(CredentialCommand),
-}
-
-#[derive(Subcommand)]
-pub enum CredentialCommand {
-    /// Create a credential. Its connection URL is printed only once.
-    Create {
-        #[arg(long)]
-        name: String,
-        /// Limit the credential to one app's schema. Omit for every app.
-        #[arg(long)]
-        app: Option<String>,
-    },
-    /// List credentials without passwords.
-    List,
-    /// Revoke a credential and close its connections.
-    Revoke { id: String },
 }
 
 #[cfg(test)]
@@ -404,16 +397,19 @@ mod tests {
     fn parses_the_quickstart() {
         for arguments in [
             vec!["ssp", "app", "create", "web"],
-            vec!["ssp", "variant", "keygen"],
+            vec!["ssp", "keygen"],
+            vec!["ssp", "whoami"],
+            vec!["ssp", "logout", "--all"],
             vec![
                 "ssp",
                 "variant",
                 "create",
-                "feature-x",
-                "./build",
+                "lower-price",
                 "--app",
                 "web",
-                "--sign-key",
+                "--image",
+                "ghcr.io/acme/web:abc",
+                "--signing-key",
                 "k",
             ],
             vec![
@@ -423,10 +419,8 @@ mod tests {
                 "checkout",
                 "--app",
                 "web",
-                "--variant",
-                "feature-x=0.5",
-                "--traffic",
-                "0.2",
+                "--split",
+                "lower-price=0.05",
                 "--note",
                 "why",
             ],
@@ -441,50 +435,61 @@ mod tests {
             vec!["ssp", "experiment", "stop", "checkout"],
             vec![
                 "ssp",
-                "experiment",
-                "results",
-                "checkout",
-                "--outcome",
-                "purchase",
-            ],
-            vec![
-                "ssp",
-                "host",
+                "proxy",
                 "--app",
                 "web",
-                "--command",
-                "serve {port}",
+                "--runtime",
+                "docker",
+                "--image",
+                "ghcr.io/acme/web:main",
                 "--trust-key",
                 "k",
-                "--capture",
-                "stdout",
-                "--capture",
-                "http",
                 "--variant-env",
                 "A=b",
+                "--memory",
+                "1g",
             ],
             vec![
                 "ssp",
-                "host",
-                "--local",
-                "--command",
-                "serve {port}",
-                "--variant",
-                "feature-x=../x",
-            ],
-            vec![
-                "ssp", "key", "create", "--name", "app", "--preset", "runtime",
+                "proxy",
+                "--app",
+                "web",
+                "--runtime",
+                "kubernetes",
+                "--default",
+                "http://localhost:8000",
             ],
             vec![
                 "ssp",
-                "database",
-                "credential",
+                "controller",
+                "--app",
+                "web",
+                "--deployment",
+                "web",
+                "--trust-key",
+                "k",
+            ],
+            vec![
+                "ssp",
+                "token",
                 "create",
                 "--name",
-                "a",
+                "ci",
+                "--preset",
+                "publisher",
+            ],
+            vec![
+                "ssp",
+                "token",
+                "create",
+                "--name",
+                "sql",
+                "--scope",
+                "query:read",
                 "--app",
                 "web",
             ],
+            vec!["ssp", "token", "revoke", "--all", "--yes"],
         ] {
             Cli::try_parse_from(&arguments)
                 .unwrap_or_else(|error| panic!("{arguments:?}: {error}"));
@@ -492,18 +497,22 @@ mod tests {
     }
 
     #[test]
-    fn production_hosts_need_trusted_keys() {
-        let missing = ["ssp", "host", "--app", "web", "--command", "serve {port}"];
-        assert!(Cli::try_parse_from(missing).is_err());
-        let unsigned = [
-            "ssp",
-            "host",
-            "--local",
-            "--command",
-            "x {port}",
-            "--trust-key",
-            "k",
-        ];
-        assert!(Cli::try_parse_from(unsigned).is_err());
+    fn rejects_unknown_scopes_and_runtimes() {
+        for arguments in [
+            vec![
+                "ssp",
+                "token",
+                "create",
+                "--name",
+                "a",
+                "--scope",
+                "keys:manage",
+            ],
+            vec!["ssp", "proxy", "--app", "web", "--runtime", "local"],
+            vec!["ssp", "controller", "--app", "web", "--deployment", "web"],
+            vec!["ssp", "token", "revoke"],
+        ] {
+            assert!(Cli::try_parse_from(&arguments).is_err(), "{arguments:?}");
+        }
     }
 }
