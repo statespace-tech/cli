@@ -25,6 +25,9 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --locked
+        env:
+          # Runs ssp proxy with real containers; GitHub's runners have Docker.
+          STATESPACE_DOCKER_TESTS: "1"
       - run: cargo package --locked
       - run: sh -n install.sh
       - run: shellcheck install.sh
