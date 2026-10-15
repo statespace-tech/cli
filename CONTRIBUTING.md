@@ -18,6 +18,13 @@ cargo test --locked
 sh -n install.sh && shellcheck install.sh
 ```
 
+The Docker test runs `ssp proxy` with real containers, a local registry, and a stand-in
+for Statespace. It needs Docker.
+
+```shell
+STATESPACE_DOCKER_TESTS=1 cargo test --locked --test cli docker
+```
+
 Run the CLI against a local service by setting its URL.
 
 ```shell
@@ -34,8 +41,8 @@ STATESPACE_URL=http://localhost:8080 cargo run -- experiment list
 ## Releases
 
 Bump the version in `Cargo.toml`, update `CHANGELOG.md`, and push a `v` tag. The release
-workflow builds checksummed archives for each platform, publishes the GitHub release, and
-publishes the crate.
+workflow builds checksummed archives for each platform, publishes the GitHub release and
+the `ghcr.io/statespace-tech/ssp` image, and publishes the crate.
 
 ```shell
 git tag v0.1.1 && git push origin v0.1.1
